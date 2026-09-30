@@ -13,6 +13,7 @@ use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\Client;
 use ArtisanBuild\AssayContracts\EnvelopeCodec;
 use ArtisanBuild\AssayContracts\Operation;
+use ArtisanBuild\AssayContracts\Outcome;
 
 it('batches deterministically and stamps current cumulative totals', function (): void {
     $drops = new InMemoryDropCounter;
@@ -37,6 +38,7 @@ it('batches deterministically and stamps current cumulative totals', function ()
             invocationId: "operation-{$index}",
             at: new DateTimeImmutable('2026-09-30T12:00:00+00:00'),
             usage: new Usage(inputTokens: $index),
+            outcome: Outcome::Completed,
         ));
     }
 
@@ -81,6 +83,7 @@ it('contains projection and dispatch failures without reaching the host', functi
         invocationId: 'operation-1',
         at: new DateTimeImmutable,
         usage: new Usage(inputTokens: 1),
+        outcome: Outcome::Completed,
     ));
 
     expect($drops->transportTotal())->toBe(1);

@@ -8,6 +8,8 @@ use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayClient\SourceInfo;
 use Closure;
 use InvalidArgumentException;
+use RuntimeException;
+use Throwable;
 
 final readonly class DriverScenario
 {
@@ -17,7 +19,7 @@ final readonly class DriverScenario
     private Closure $exercise;
 
     /**
-     * @param  callable(string): void  $exercise
+     * @param  callable(Throwable): void  $exercise
      * @param  list<RecordInput>  $expectedRecords
      */
     public function __construct(
@@ -38,6 +40,6 @@ final readonly class DriverScenario
 
     public function exercise(): void
     {
-        ($this->exercise)($this->canary);
+        ($this->exercise)(new RuntimeException($this->canary));
     }
 }

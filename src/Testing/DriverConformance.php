@@ -19,6 +19,7 @@ use ArtisanBuild\AssayClient\Records\StepInput;
 use ArtisanBuild\AssayClient\Records\ToolCallInput;
 use ArtisanBuild\AssayContracts\Client;
 use ArtisanBuild\AssayContracts\EnvelopeCodec;
+use ArtisanBuild\AssayContracts\RecordType;
 use ReflectionObject;
 use Throwable;
 
@@ -76,6 +77,8 @@ final class DriverConformance
             if (! in_array($record::class, self::ALLOWED_INPUTS, true)) {
                 throw new ConformanceViolation('A source object or unsupported record input reached the recorder: '.$record::class.'.');
             }
+
+            self::assertRequiredMetadata($record);
         }
 
         if (serialize($records) !== serialize($scenario->expectedRecords)) {
@@ -99,6 +102,23 @@ final class DriverConformance
 
         if (! $hasFailover || count($attempts) < 2) {
             throw new ConformanceViolation('The failover scenario must report a failover and at least two attempt ordinals.');
+        }
+    }
+
+    private static function assertRequiredMetadata(RecordInput $record): void
+    {
+        if (($record instanceof RunInput && $record->type === RecordType::RunEnd) || $record instanceof SingleOperationInput) {
+            if ($record->outcome === null) {
+                throw new ConformanceViolation('Every run.end must report an outcome.');
+            }
+        }
+
+        if ($record instanceof ToolCallInput && $record->type === RecordType::ToolEnd && $record->outcome === null) {
+            throw new ConformanceViolation('Every tool.end must report an outcome.');
+        }
+
+        if ($record instanceof ToolCallInput && $record->type === RecordType::ToolApproval && $record->approval === null) {
+            throw new ConformanceViolation('Every tool.approval must report an approval.');
         }
     }
 
@@ -174,12 +194,19 @@ final class DriverConformance
                 throw new ConformanceViolation('The caller-supplied canary reached the projected envelope.');
             }
 
-            $job = new ShipEnvelope($json, time() + 86400);
-            self::assertPrimitiveJobState($job);
+            $serializedJob = serialize(new ShipEnvelope($json, time() + 86400));
 
-            if (str_contains(serialize($job), $scenario->canary)) {
+            if (str_contains($serializedJob, $scenario->canary)) {
                 throw new ConformanceViolation('The caller-supplied canary reached queued job state.');
             }
+
+            $job = unserialize($serializedJob, ['allowed_classes' => [ShipEnvelope::class]]);
+
+            if (! $job instanceof ShipEnvelope) {
+                throw new ConformanceViolation('The queued job could not be reconstructed safely.');
+            }
+
+            self::assertPrimitiveJobState($job);
 
             foreach (EnvelopeCodec::decode($json)->records as $record) {
                 $array = $record->toArray();
@@ -198,7 +225,7 @@ final class DriverConformance
         }
 
         if ($actual !== $expected) {
-            throw new ConformanceViolation('Usage values or run/attempt/step/tool/parent linkage did not survive projection.');
+            throw new ConformanceViolation('Usage metadata or run/attempt/step/tool/parent linkage did not survive projection.');
         }
     }
 

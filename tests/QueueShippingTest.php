@@ -14,6 +14,7 @@ use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\Client;
 use ArtisanBuild\AssayContracts\EnvelopeCodec;
 use ArtisanBuild\AssayContracts\Operation;
+use ArtisanBuild\AssayContracts\Outcome;
 use Illuminate\Contracts\Encryption\Encrypter;
 use Illuminate\Contracts\Queue\Queue;
 use Illuminate\Database\Schema\Blueprint;
@@ -82,6 +83,7 @@ it('uses Laravel queue encryption and serializes primitive job state only', func
         invocationId: 'operation-1',
         at: new DateTimeImmutable('2026-09-30T12:00:00.123456+00:00'),
         usage: new Usage(audioSeconds: 1.25),
+        outcome: Outcome::Completed,
     ));
 
     $payload = (string) DB::table('jobs')->value('payload');

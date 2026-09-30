@@ -31,6 +31,31 @@ final class InputValidation
         }
     }
 
+    public static function metadataString(string $value, string $field): void
+    {
+        $length = preg_match_all('/./us', $value);
+
+        if ($length === false || $length < 1 || $length > 255 || preg_match('/\p{Cc}/u', $value) === 1) {
+            throw new InvalidArgumentException("{$field} must contain 1 to 255 characters and no control characters.");
+        }
+    }
+
+    public static function duration(float $durationMs): void
+    {
+        if (! is_finite($durationMs) || $durationMs < 0) {
+            throw new InvalidArgumentException('Duration must be finite and non-negative.');
+        }
+    }
+
+    public static function failureClass(string $failureClass): void
+    {
+        self::metadataString($failureClass, 'Failure class');
+
+        if (preg_match('~^[A-Za-z_\\\\][A-Za-z0-9_\\\\]*$~D', $failureClass) !== 1) {
+            throw new InvalidArgumentException('Failure class must be a PHP class name.');
+        }
+    }
+
     public static function time(DateTimeInterface $at): DateTimeImmutable
     {
         return DateTimeImmutable::createFromInterface($at);

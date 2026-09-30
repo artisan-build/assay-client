@@ -27,9 +27,20 @@ final readonly class AttemptInput implements RecordInput
         public ?string $subject = null,
         public ?Usage $usage = null,
         public ?ModelInfo $model = null,
+        public ?string $agent = null,
+        public ?string $failureClass = null,
     ) {
         InputValidation::required($this->invocationId, 'Invocation id');
         InputValidation::attempt($this->attempt);
+
+        if ($this->agent !== null) {
+            InputValidation::metadataString($this->agent, 'Agent');
+        }
+
+        if ($this->failureClass !== null) {
+            InputValidation::failureClass($this->failureClass);
+        }
+
         $this->at = InputValidation::time($at);
     }
 }

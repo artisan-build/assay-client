@@ -9,7 +9,9 @@ use ArtisanBuild\AssayClient\ModelInfo;
 use ArtisanBuild\AssayClient\ParentLink;
 use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayClient\Usage;
+use ArtisanBuild\AssayContracts\Approval;
 use ArtisanBuild\AssayContracts\CaptureMode;
+use ArtisanBuild\AssayContracts\Outcome;
 use ArtisanBuild\AssayContracts\RecordType;
 use DateTimeImmutable;
 use DateTimeInterface;
@@ -32,6 +34,12 @@ final readonly class ToolCallInput implements RecordInput
         public ?string $subject = null,
         public ?Usage $usage = null,
         public ?ModelInfo $model = null,
+        public ?string $agent = null,
+        public ?string $tool = null,
+        public ?float $durationMs = null,
+        public ?Outcome $outcome = null,
+        public ?Approval $approval = null,
+        public ?string $failureClass = null,
     ) {
         if (! in_array($this->type, [RecordType::ToolStart, RecordType::ToolEnd, RecordType::ToolApproval], true)) {
             throw new InvalidArgumentException('Tool input type must be tool.start, tool.end, or tool.approval.');
@@ -43,6 +51,38 @@ final readonly class ToolCallInput implements RecordInput
 
         if ($this->step !== null) {
             InputValidation::step($this->step);
+        }
+
+        if ($this->agent !== null) {
+            InputValidation::metadataString($this->agent, 'Agent');
+        }
+
+        if ($this->tool !== null) {
+            InputValidation::metadataString($this->tool, 'Tool');
+        }
+
+        if ($this->durationMs !== null) {
+            InputValidation::duration($this->durationMs);
+
+            if ($this->type !== RecordType::ToolEnd) {
+                throw new InvalidArgumentException('Duration is allowed only on tool.end.');
+            }
+        }
+
+        if (($this->type === RecordType::ToolEnd) !== ($this->outcome !== null)) {
+            throw new InvalidArgumentException('Outcome is required on tool.end and forbidden on other tool records.');
+        }
+
+        if (($this->type === RecordType::ToolApproval) !== ($this->approval !== null)) {
+            throw new InvalidArgumentException('Approval is required on tool.approval and forbidden on other tool records.');
+        }
+
+        if ($this->failureClass !== null) {
+            InputValidation::failureClass($this->failureClass);
+
+            if ($this->type !== RecordType::ToolEnd || $this->outcome !== Outcome::Failed) {
+                throw new InvalidArgumentException('Failure class requires a failed tool.end.');
+            }
         }
 
         $this->at = InputValidation::time($at);

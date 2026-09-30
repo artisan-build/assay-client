@@ -48,6 +48,10 @@ final class RecordInputProjector
             subject: $input->subject,
             usage: $input->usage?->toContract(),
             model: $input->model?->toContract(),
+            agent: $input->agent,
+            finishReason: $input->finishReason,
+            outcome: $input->outcome,
+            failureClass: $input->failureClass,
         );
     }
 
@@ -68,6 +72,8 @@ final class RecordInputProjector
             subject: $input->subject,
             usage: $input->usage?->toContract(),
             model: $input->model?->toContract(),
+            agent: $input->agent,
+            failureClass: $input->failureClass,
         );
     }
 
@@ -89,6 +95,10 @@ final class RecordInputProjector
             subject: $input->subject,
             usage: $input->usage?->toContract(),
             model: $input->model?->toContract(),
+            agent: $input->agent,
+            durationMs: $input->durationMs,
+            finishReason: $input->finishReason,
+            failureClass: $input->failureClass,
         );
     }
 
@@ -111,6 +121,12 @@ final class RecordInputProjector
             subject: $input->subject,
             usage: $input->usage?->toContract(),
             model: $input->model?->toContract(),
+            agent: $input->agent,
+            tool: $input->tool,
+            durationMs: $input->durationMs,
+            outcome: $input->outcome,
+            approval: $input->approval,
+            failureClass: $input->failureClass,
         );
     }
 
@@ -131,6 +147,10 @@ final class RecordInputProjector
             subject: $input->subject,
             usage: $input->usage?->toContract(),
             model: $input->model?->toContract(),
+            durationMs: $input->durationMs,
+            finishReason: $input->finishReason,
+            outcome: $input->outcome,
+            failureClass: $input->failureClass,
         );
     }
 }

@@ -10,7 +10,9 @@ use ArtisanBuild\AssayClient\ParentLink;
 use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\CaptureMode;
+use ArtisanBuild\AssayContracts\FinishReason;
 use ArtisanBuild\AssayContracts\Operation;
+use ArtisanBuild\AssayContracts\Outcome;
 use DateTimeImmutable;
 use DateTimeInterface;
 use InvalidArgumentException;
@@ -30,6 +32,10 @@ final readonly class SingleOperationInput implements RecordInput
         public ?string $subject = null,
         public ?Usage $usage = null,
         public ?ModelInfo $model = null,
+        public ?float $durationMs = null,
+        public ?FinishReason $finishReason = null,
+        public ?Outcome $outcome = null,
+        public ?string $failureClass = null,
     ) {
         if ($this->operation === Operation::Agent) {
             throw new InvalidArgumentException('Single-operation input cannot use the agent operation.');
@@ -39,6 +45,22 @@ final readonly class SingleOperationInput implements RecordInput
 
         if ($this->attempt !== null) {
             InputValidation::attempt($this->attempt);
+        }
+
+        if ($this->durationMs !== null) {
+            InputValidation::duration($this->durationMs);
+        }
+
+        if ($this->outcome === null) {
+            throw new InvalidArgumentException('Outcome is required on a single-operation run.end.');
+        }
+
+        if ($this->failureClass !== null) {
+            InputValidation::failureClass($this->failureClass);
+
+            if ($this->outcome !== Outcome::Failed) {
+                throw new InvalidArgumentException('Failure class requires a failed outcome.');
+            }
         }
 
         $this->at = InputValidation::time($at);

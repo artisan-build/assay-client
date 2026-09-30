@@ -10,15 +10,16 @@ use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayClient\SourceInfo;
 use Closure;
 use LogicException;
+use Throwable;
 
 final class FakeDriver implements CaptureDriver
 {
-    /** @var Closure(string): list<RecordInput> */
+    /** @var Closure(Throwable): list<RecordInput> */
     private readonly Closure $project;
 
     private ?Recorder $recorder = null;
 
-    /** @param callable(string): list<RecordInput> $project */
+    /** @param callable(Throwable): list<RecordInput> $project */
     public function __construct(
         private readonly string $driverName,
         private readonly SourceInfo $sourceInfo,
@@ -42,7 +43,7 @@ final class FakeDriver implements CaptureDriver
         $this->recorder = $recorder;
     }
 
-    public function capture(string $sourceValue): void
+    public function capture(Throwable $sourceFailure): void
     {
         $recorder = $this->recorder;
 
@@ -50,7 +51,7 @@ final class FakeDriver implements CaptureDriver
             throw new LogicException('The fake driver must be registered before capture.');
         }
 
-        foreach (($this->project)($sourceValue) as $record) {
+        foreach (($this->project)($sourceFailure) as $record) {
             $recorder->record($record);
         }
 
