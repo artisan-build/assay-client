@@ -12,10 +12,11 @@
             "dist": {
                 "type": "path",
                 "url": "../assay-contracts",
-                "reference": "b56a44a446b2845452a3d5dde34dc876aaa801f1"
+                "reference": "e08f429d6d07b5bcab687e97e058846c3423da2e"
             },
             "require": {
-                "php": "^8.3"
+                "php": "^8.3",
+                "ramsey/uuid": "^4.9"
             },
             "require-dev": {
                 "laravel/pint": "^1.27",
