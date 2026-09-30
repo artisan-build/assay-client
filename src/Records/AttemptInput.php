@@ -8,8 +8,8 @@ use ArtisanBuild\AssayClient\Internal\InputValidation;
 use ArtisanBuild\AssayClient\ModelInfo;
 use ArtisanBuild\AssayClient\ParentLink;
 use ArtisanBuild\AssayClient\RecordInput;
-use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\CaptureMode;
+use ArtisanBuild\AssayContracts\Operation;
 use DateTimeImmutable;
 use DateTimeInterface;
 
@@ -21,18 +21,18 @@ final readonly class AttemptInput implements RecordInput
         public ?string $invocationId,
         public ?int $attempt,
         DateTimeInterface $at,
+        public ?Operation $operation = null,
         public CaptureMode $capture = CaptureMode::Usage,
         public bool $sampled = false,
         public ?ParentLink $parent = null,
         public ?string $subject = null,
-        public ?Usage $usage = null,
         public ?ModelInfo $model = null,
         public ?string $agent = null,
         public ?string $failureClass = null,
     ) {
         if ($this->invocationId === null) {
-            if ($this->attempt !== null || $this->parent !== null || $this->agent !== null) {
-                throw new \InvalidArgumentException('Unattributed failover must omit attempt, parent, and agent metadata.');
+            if ($this->operation !== null || $this->attempt !== null || $this->parent !== null || $this->agent !== null) {
+                throw new \InvalidArgumentException('Unattributed failover must omit operation, attempt, parent, and agent metadata.');
             }
 
             if ($this->model?->provider === null || $this->model->requested === null) {
@@ -41,15 +41,27 @@ final readonly class AttemptInput implements RecordInput
         } else {
             InputValidation::required($this->invocationId, 'Invocation id');
 
-            if ($this->attempt === null) {
-                throw new \InvalidArgumentException('Attributed failover requires an attempt.');
+            if ($this->operation === null) {
+                throw new \InvalidArgumentException('Attributed failover requires an operation.');
             }
 
-            InputValidation::attempt($this->attempt);
+            if (($this->operation === Operation::Agent) !== ($this->attempt !== null)) {
+                throw new \InvalidArgumentException('Failover attempt is required exactly for the agent operation.');
+            }
+
+            if ($this->attempt !== null) {
+                InputValidation::attempt($this->attempt);
+            }
         }
 
-        if ($this->agent !== null) {
-            InputValidation::metadataString($this->agent, 'Agent');
+        $agent = $this->agent;
+
+        if ($agent !== null) {
+            if ($this->operation !== Operation::Agent) {
+                throw new \InvalidArgumentException('Agent metadata is allowed only for the agent operation.');
+            }
+
+            InputValidation::metadataString($agent, 'Agent');
         }
 
         if ($this->failureClass !== null) {

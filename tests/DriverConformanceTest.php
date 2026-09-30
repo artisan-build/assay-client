@@ -8,6 +8,7 @@ use ArtisanBuild\AssayClient\ParentLink;
 use ArtisanBuild\AssayClient\Recorder;
 use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayClient\Records\AttemptInput;
+use ArtisanBuild\AssayClient\Records\OperationStartInput;
 use ArtisanBuild\AssayClient\Records\RunInput;
 use ArtisanBuild\AssayClient\Records\SingleOperationInput;
 use ArtisanBuild\AssayClient\Records\StepInput;
@@ -19,16 +20,20 @@ use ArtisanBuild\AssayClient\Testing\DriverScenario;
 use ArtisanBuild\AssayClient\Testing\FakeDriver;
 use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\Approval;
+use ArtisanBuild\AssayContracts\CaptureMode;
+use ArtisanBuild\AssayContracts\FailureCapture;
 use ArtisanBuild\AssayContracts\FinishReason;
 use ArtisanBuild\AssayContracts\Operation;
 use ArtisanBuild\AssayContracts\Outcome;
 use ArtisanBuild\AssayContracts\RecordType;
+use ArtisanBuild\AssayContracts\ReplayInputOmission;
 
 function conformanceRecords(?int $manufacturedOutput = null, string $failureClass = RuntimeException::class): array
 {
     $at = new DateTimeImmutable('2026-09-30T12:00:00.123456+00:00');
     $parent = new ParentLink('parent-invocation', 'parent-tool');
     $model = new ModelInfo(requested: 'requested-model', responded: 'responded-model', provider: 'provider-a');
+    $requestedModel = new ModelInfo(requested: 'requested-model', provider: 'provider-a');
 
     return [
         new RunInput(RecordType::RunStart, 'run-1', 1, $at, parent: $parent, subject: 'subject-1', model: $model, agent: 'App\\Ai\\SupportAgent'),
@@ -38,22 +43,27 @@ function conformanceRecords(?int $manufacturedOutput = null, string $failureClas
             cacheReadInputTokens: 3,
             cacheWriteInputTokens: 4,
             reasoningTokens: 5,
-            imageInputTokens: 6,
-            imageOutputTokens: 7,
-            audioSeconds: 1.25,
-            searchUnits: 2.75,
         ), model: $model, agent: 'App\\Ai\\SupportAgent', durationMs: 42.5, finishReason: FinishReason::ToolCalls),
         new ToolCallInput(RecordType::ToolEnd, 'run-1', 1, 'tool-1', $at, step: 0, parent: $parent, agent: 'App\\Ai\\SupportAgent', tool: 'lookup_order', durationMs: 7.25, outcome: Outcome::Completed),
         new ToolCallInput(RecordType::ToolApproval, 'run-1', 1, 'tool-2', $at, step: 0, parent: $parent, agent: 'App\\Ai\\SupportAgent', tool: 'refund_order', approval: Approval::Requested),
-        new AttemptInput('run-1', 1, $at, parent: $parent, model: $model, agent: 'App\\Ai\\SupportAgent', failureClass: $failureClass),
+        new AttemptInput('run-1', 1, $at, operation: Operation::Agent, parent: $parent, model: $model, agent: 'App\\Ai\\SupportAgent', failureClass: $failureClass),
         new RunInput(RecordType::RunStart, 'run-1', 2, $at, parent: $parent, model: $model),
-        new RunInput(RecordType::RunEnd, 'run-1', 2, $at, parent: $parent, usage: new Usage(inputTokens: 2), model: $model, agent: 'App\\Ai\\SupportAgent', finishReason: FinishReason::Stop, outcome: Outcome::Completed),
+        new RunInput(RecordType::RunEnd, 'run-1', 2, $at, capture: CaptureMode::Full, parent: $parent, usage: new Usage(inputTokens: 2), model: $model, agent: 'App\\Ai\\SupportAgent', finishReason: FinishReason::Error, outcome: Outcome::Failed, failureClass: RuntimeException::class, failureCapture: FailureCapture::Complete, replayInputsOmitted: [ReplayInputOmission::Attachments]),
+        new OperationStartInput(Operation::Embeddings, 'embeddings-1', $at, $parent, CaptureMode::Usage, false, null, $requestedModel),
         new SingleOperationInput(Operation::Embeddings, 'embeddings-1', $at, parent: $parent, usage: new Usage(inputTokens: 8), durationMs: 1.5, finishReason: FinishReason::Unknown, outcome: Outcome::Completed),
-        new SingleOperationInput(Operation::Image, 'image-1', $at, parent: $parent, usage: new Usage(imageOutputTokens: 9), outcome: Outcome::Completed),
+        new OperationStartInput(Operation::Image, 'image-a', $at, $parent, CaptureMode::Usage, false, null, $requestedModel),
+        new AttemptInput('image-a', null, $at, operation: Operation::Image, parent: $parent, model: $model, failureClass: $failureClass),
+        new OperationStartInput(Operation::Image, 'image-b', $at, $parent, CaptureMode::Usage, false, null, $requestedModel),
+        new SingleOperationInput(Operation::Image, 'image-b', $at, parent: $parent, usage: new Usage(imageOutputTokens: 9), outcome: Outcome::Completed),
+        new OperationStartInput(Operation::Audio, 'audio-1', $at, $parent, CaptureMode::Usage, false, null, $requestedModel),
         new SingleOperationInput(Operation::Audio, 'audio-1', $at, parent: $parent, usage: new Usage(outputTokens: 10), outcome: Outcome::Completed),
+        new OperationStartInput(Operation::Transcription, 'transcription-1', $at, $parent, CaptureMode::Usage, false, null, $requestedModel),
         new SingleOperationInput(Operation::Transcription, 'transcription-1', $at, parent: $parent, usage: new Usage(audioSeconds: 3.5), outcome: Outcome::Completed),
+        new OperationStartInput(Operation::Reranking, 'reranking-1', $at, $parent, CaptureMode::Usage, false, null, $requestedModel),
         new SingleOperationInput(Operation::Reranking, 'reranking-1', $at, parent: $parent, usage: new Usage(outputTokens: $manufacturedOutput, searchUnits: 4.125), outcome: Outcome::Completed),
+        new OperationStartInput(Operation::Classification, 'classification-1', $at, $parent, CaptureMode::Usage, false, null, $requestedModel),
         new SingleOperationInput(Operation::Classification, 'classification-1', $at, parent: $parent, usage: new Usage(inputTokens: 13, outputTokens: 14), outcome: Outcome::Completed),
+        new AttemptInput(null, null, $at, model: new ModelInfo(requested: 'unmatched-model', provider: 'provider-b'), failureClass: $failureClass),
     ];
 }
 
@@ -102,14 +112,13 @@ it('fails a deliberately broken driver that leaks a source object', function ():
     )))->toThrow(ConformanceViolation::class, 'source object');
 });
 
-it('fails a deliberately broken driver that manufactures zero for an omitted metric', function (): void {
+it('fails a deliberately broken driver that reports an inapplicable metric', function (): void {
     $source = new SourceInfo('vendor/broken-source', '1.0.0');
     $expected = conformanceRecords();
-    $actual = conformanceRecords(0);
-    $driver = new FakeDriver('broken-zero', $source, static fn (Throwable $failure): array => $actual);
+    $driver = new FakeDriver('broken-metric', $source, static fn (Throwable $failure): array => conformanceRecords(0));
 
     expect(fn () => DriverConformance::assert($driver, new DriverScenario(
-        driverName: 'broken-zero',
+        driverName: 'broken-metric',
         source: $source,
         exercise: static function (Throwable $failure) use ($driver): void {
             $driver->capture($failure);
@@ -117,7 +126,25 @@ it('fails a deliberately broken driver that manufactures zero for an omitted met
         expectedRecords: $expected,
         canary: 'zero-canary',
         supportsFailover: true,
-    )))->toThrow(ConformanceViolation::class, 'zero manufacturing');
+    )))->toThrow(ConformanceViolation::class, 'not applicable to reranking');
+});
+
+it('fails a deliberately broken driver that omits operation from an attributed failover', function (): void {
+    $source = new SourceInfo('vendor/broken-source', '1.0.0');
+    $driver = new FakeDriver('broken-failover', $source, static fn (Throwable $failure): array => [
+        new AttemptInput('failed-invocation-a', null, new DateTimeImmutable, model: new ModelInfo(requested: 'model-a', provider: 'provider-a')),
+    ]);
+
+    expect(fn () => DriverConformance::assert($driver, new DriverScenario(
+        driverName: 'broken-failover',
+        source: $source,
+        exercise: static function (Throwable $failure) use ($driver): void {
+            $driver->capture($failure);
+        },
+        expectedRecords: conformanceRecords(),
+        canary: 'failover-canary',
+        supportsFailover: true,
+    )))->toThrow(ConformanceViolation::class, 'Attributed failover requires an operation');
 });
 
 it('fails a deliberately broken projector that leaks an exception message', function (): void {

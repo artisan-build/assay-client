@@ -10,9 +10,12 @@ use ArtisanBuild\AssayClient\ParentLink;
 use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\CaptureMode;
+use ArtisanBuild\AssayContracts\FailureCapture;
 use ArtisanBuild\AssayContracts\FinishReason;
+use ArtisanBuild\AssayContracts\Operation;
 use ArtisanBuild\AssayContracts\Outcome;
 use ArtisanBuild\AssayContracts\RecordType;
+use ArtisanBuild\AssayContracts\ReplayInputOmission;
 use DateTimeImmutable;
 use DateTimeInterface;
 use InvalidArgumentException;
@@ -21,6 +24,10 @@ final readonly class RunInput implements RecordInput
 {
     public DateTimeImmutable $at;
 
+    /** @var list<ReplayInputOmission>|null */
+    public ?array $replayInputsOmitted;
+
+    /** @param array<array-key, mixed>|null $replayInputsOmitted */
     public function __construct(
         public RecordType $type,
         public string $invocationId,
@@ -36,6 +43,8 @@ final readonly class RunInput implements RecordInput
         public ?FinishReason $finishReason = null,
         public ?Outcome $outcome = null,
         public ?string $failureClass = null,
+        public ?FailureCapture $failureCapture = null,
+        ?array $replayInputsOmitted = null,
     ) {
         if (! in_array($this->type, [RecordType::RunStart, RecordType::RunEnd], true)) {
             throw new InvalidArgumentException('Run input type must be run.start or run.end.');
@@ -43,6 +52,14 @@ final readonly class RunInput implements RecordInput
 
         InputValidation::required($this->invocationId, 'Invocation id');
         InputValidation::attempt($this->attempt);
+
+        if ($this->usage !== null) {
+            if ($this->type !== RecordType::RunEnd) {
+                throw new InvalidArgumentException('Usage is allowed only on run.end.');
+            }
+
+            InputValidation::usage($this->usage, Operation::Agent);
+        }
 
         if ($this->agent !== null) {
             InputValidation::metadataString($this->agent, 'Agent');
@@ -64,6 +81,27 @@ final readonly class RunInput implements RecordInput
             }
         }
 
+        if ($this->failureCapture !== null
+            && ($this->type !== RecordType::RunEnd
+                || $this->outcome !== Outcome::Failed
+                || $this->sampled
+                || $this->capture !== CaptureMode::Full)) {
+            throw new InvalidArgumentException('Failure capture requires an unsampled failed run.end in full capture mode.');
+        }
+
+        if ($replayInputsOmitted !== null) {
+            if ($this->type !== RecordType::RunEnd || $replayInputsOmitted === [] || ! array_is_list($replayInputsOmitted)) {
+                throw new InvalidArgumentException('Replay inputs omitted must be a non-empty list on run.end.');
+            }
+
+            foreach ($replayInputsOmitted as $omission) {
+                if (! $omission instanceof ReplayInputOmission) {
+                    throw new InvalidArgumentException('Every replay input omission must be a ReplayInputOmission.');
+                }
+            }
+        }
+
         $this->at = InputValidation::time($at);
+        $this->replayInputsOmitted = $replayInputsOmitted;
     }
 }

@@ -11,6 +11,7 @@ use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\CaptureMode;
 use ArtisanBuild\AssayContracts\FinishReason;
+use ArtisanBuild\AssayContracts\Operation;
 use ArtisanBuild\AssayContracts\RecordType;
 use DateTimeImmutable;
 use DateTimeInterface;
@@ -44,6 +45,14 @@ final readonly class StepInput implements RecordInput
         InputValidation::required($this->invocationId, 'Invocation id');
         InputValidation::attempt($this->attempt);
         InputValidation::step($this->step);
+
+        if ($this->usage !== null) {
+            if ($this->type !== RecordType::StepEnd) {
+                throw new InvalidArgumentException('Usage is allowed only on step.end.');
+            }
+
+            InputValidation::usage($this->usage, Operation::Agent);
+        }
 
         if ($this->agent !== null) {
             InputValidation::metadataString($this->agent, 'Agent');

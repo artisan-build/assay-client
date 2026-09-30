@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\AssayClient\Internal;
 
+use ArtisanBuild\AssayClient\Usage;
+use ArtisanBuild\AssayContracts\InvalidEnvelope;
+use ArtisanBuild\AssayContracts\Operation;
 use DateTimeImmutable;
 use DateTimeInterface;
 use InvalidArgumentException;
@@ -53,6 +56,15 @@ final class InputValidation
 
         if (preg_match('~^[A-Za-z_\\\\][A-Za-z0-9_\\\\]*$~D', $failureClass) !== 1) {
             throw new InvalidArgumentException('Failure class must be a PHP class name.');
+        }
+    }
+
+    public static function usage(Usage $usage, Operation $operation): void
+    {
+        try {
+            $usage->toContract()->validateFor($operation);
+        } catch (InvalidEnvelope $exception) {
+            throw new InvalidArgumentException($exception->getMessage(), previous: $exception);
         }
     }
 

@@ -6,6 +6,7 @@ namespace ArtisanBuild\AssayClient\Internal;
 
 use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayClient\Records\AttemptInput;
+use ArtisanBuild\AssayClient\Records\OperationStartInput;
 use ArtisanBuild\AssayClient\Records\RunInput;
 use ArtisanBuild\AssayClient\Records\SingleOperationInput;
 use ArtisanBuild\AssayClient\Records\StepInput;
@@ -24,6 +25,7 @@ final class RecordInputProjector
         return match (true) {
             $input instanceof RunInput => $this->run($input, $source),
             $input instanceof AttemptInput => $this->attempt($input, $source),
+            $input instanceof OperationStartInput => $this->operationStart($input, $source),
             $input instanceof StepInput => $this->step($input, $source),
             $input instanceof ToolCallInput => $this->tool($input, $source),
             $input instanceof SingleOperationInput => $this->operation($input, $source),
@@ -52,6 +54,8 @@ final class RecordInputProjector
             finishReason: $input->finishReason,
             outcome: $input->outcome,
             failureClass: $input->failureClass,
+            failureCapture: $input->failureCapture,
+            replayInputsOmitted: $input->replayInputsOmitted,
         );
     }
 
@@ -61,7 +65,7 @@ final class RecordInputProjector
             recordId: UuidV7::generate(),
             source: $source,
             type: RecordType::RunFailover,
-            operation: $input->invocationId === null ? null : Operation::Agent,
+            operation: $input->operation,
             at: Timestamp::fromDateTime($input->at),
             capture: $input->capture,
             sampled: $input->sampled,
@@ -70,7 +74,6 @@ final class RecordInputProjector
             parentInvocationId: $input->parent?->invocationId,
             parentToolInvocationId: $input->parent?->toolInvocationId,
             subject: $input->subject,
-            usage: $input->usage?->toContract(),
             model: $input->model?->toContract(),
             agent: $input->agent,
             failureClass: $input->failureClass,
@@ -119,7 +122,6 @@ final class RecordInputProjector
             step: $input->step,
             toolInvocationId: $input->toolInvocationId,
             subject: $input->subject,
-            usage: $input->usage?->toContract(),
             model: $input->model?->toContract(),
             agent: $input->agent,
             tool: $input->tool,
@@ -141,7 +143,6 @@ final class RecordInputProjector
             capture: $input->capture,
             sampled: $input->sampled,
             invocationId: $input->invocationId,
-            attempt: $input->attempt,
             parentInvocationId: $input->parent?->invocationId,
             parentToolInvocationId: $input->parent?->toolInvocationId,
             subject: $input->subject,
@@ -151,6 +152,24 @@ final class RecordInputProjector
             finishReason: $input->finishReason,
             outcome: $input->outcome,
             failureClass: $input->failureClass,
+        );
+    }
+
+    private function operationStart(OperationStartInput $input, string $source): RecordV1
+    {
+        return new RecordV1(
+            recordId: UuidV7::generate(),
+            source: $source,
+            type: RecordType::RunStart,
+            operation: $input->operation,
+            at: Timestamp::fromDateTime($input->at),
+            capture: $input->capture,
+            sampled: $input->sampled,
+            invocationId: $input->invocationId,
+            parentInvocationId: $input->parent?->invocationId,
+            parentToolInvocationId: $input->parent?->toolInvocationId,
+            subject: $input->subject,
+            model: $input->model->toContract(),
         );
     }
 }

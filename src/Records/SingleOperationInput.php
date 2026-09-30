@@ -25,7 +25,6 @@ final readonly class SingleOperationInput implements RecordInput
         public Operation $operation,
         public string $invocationId,
         DateTimeInterface $at,
-        public ?int $attempt = null,
         public CaptureMode $capture = CaptureMode::Usage,
         public bool $sampled = false,
         public ?ParentLink $parent = null,
@@ -43,8 +42,8 @@ final readonly class SingleOperationInput implements RecordInput
 
         InputValidation::required($this->invocationId, 'Invocation id');
 
-        if ($this->attempt !== null) {
-            InputValidation::attempt($this->attempt);
+        if ($this->usage !== null) {
+            InputValidation::usage($this->usage, $this->operation);
         }
 
         if ($this->durationMs !== null) {

@@ -13,6 +13,7 @@ use ArtisanBuild\AssayClient\Jobs\ShipEnvelope;
 use ArtisanBuild\AssayClient\Recorder;
 use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayClient\Records\AttemptInput;
+use ArtisanBuild\AssayClient\Records\OperationStartInput;
 use ArtisanBuild\AssayClient\Records\RunInput;
 use ArtisanBuild\AssayClient\Records\SingleOperationInput;
 use ArtisanBuild\AssayClient\Records\StepInput;
@@ -29,6 +30,7 @@ final class DriverConformance
     private const array ALLOWED_INPUTS = [
         RunInput::class,
         AttemptInput::class,
+        OperationStartInput::class,
         StepInput::class,
         ToolCallInput::class,
         SingleOperationInput::class,

@@ -8,7 +8,6 @@ use ArtisanBuild\AssayClient\Internal\InputValidation;
 use ArtisanBuild\AssayClient\ModelInfo;
 use ArtisanBuild\AssayClient\ParentLink;
 use ArtisanBuild\AssayClient\RecordInput;
-use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\Approval;
 use ArtisanBuild\AssayContracts\CaptureMode;
 use ArtisanBuild\AssayContracts\Outcome;
@@ -32,7 +31,6 @@ final readonly class ToolCallInput implements RecordInput
         public bool $sampled = false,
         public ?ParentLink $parent = null,
         public ?string $subject = null,
-        public ?Usage $usage = null,
         public ?ModelInfo $model = null,
         public ?string $agent = null,
         public ?string $tool = null,
