@@ -61,7 +61,7 @@ final class RecordInputProjector
             recordId: UuidV7::generate(),
             source: $source,
             type: RecordType::RunFailover,
-            operation: Operation::Agent,
+            operation: $input->invocationId === null ? null : Operation::Agent,
             at: Timestamp::fromDateTime($input->at),
             capture: $input->capture,
             sampled: $input->sampled,

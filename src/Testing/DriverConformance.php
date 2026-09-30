@@ -93,7 +93,8 @@ final class DriverConformance
         $hasFailover = false;
 
         foreach ($records as $record) {
-            if ($record instanceof RunInput || $record instanceof AttemptInput || $record instanceof StepInput || $record instanceof ToolCallInput) {
+            if (($record instanceof RunInput || $record instanceof AttemptInput || $record instanceof StepInput || $record instanceof ToolCallInput)
+                && $record->attempt !== null) {
                 $attempts[$record->attempt] = true;
             }
 

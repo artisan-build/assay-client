@@ -18,8 +18,8 @@ final readonly class AttemptInput implements RecordInput
     public DateTimeImmutable $at;
 
     public function __construct(
-        public string $invocationId,
-        public int $attempt,
+        public ?string $invocationId,
+        public ?int $attempt,
         DateTimeInterface $at,
         public CaptureMode $capture = CaptureMode::Usage,
         public bool $sampled = false,
@@ -30,8 +30,23 @@ final readonly class AttemptInput implements RecordInput
         public ?string $agent = null,
         public ?string $failureClass = null,
     ) {
-        InputValidation::required($this->invocationId, 'Invocation id');
-        InputValidation::attempt($this->attempt);
+        if ($this->invocationId === null) {
+            if ($this->attempt !== null || $this->parent !== null || $this->agent !== null) {
+                throw new \InvalidArgumentException('Unattributed failover must omit attempt, parent, and agent metadata.');
+            }
+
+            if ($this->model?->provider === null || $this->model->requested === null) {
+                throw new \InvalidArgumentException('Unattributed failover requires model provider and requested.');
+            }
+        } else {
+            InputValidation::required($this->invocationId, 'Invocation id');
+
+            if ($this->attempt === null) {
+                throw new \InvalidArgumentException('Attributed failover requires an attempt.');
+            }
+
+            InputValidation::attempt($this->attempt);
+        }
 
         if ($this->agent !== null) {
             InputValidation::metadataString($this->agent, 'Agent');

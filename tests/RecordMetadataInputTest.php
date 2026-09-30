@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use ArtisanBuild\AssayClient\Internal\RecordInputProjector;
+use ArtisanBuild\AssayClient\ModelInfo;
+use ArtisanBuild\AssayClient\ParentLink;
 use ArtisanBuild\AssayClient\Records\AttemptInput;
 use ArtisanBuild\AssayClient\Records\RunInput;
 use ArtisanBuild\AssayClient\Records\SingleOperationInput;
@@ -79,6 +81,56 @@ it('keeps absent optional metadata absent through projection', function (): void
         'failure_class',
     ]);
 });
+
+it('projects attributed and unattributed failover forms without false operation data', function (): void {
+    $at = new DateTimeImmutable('2026-09-30T12:00:00.123456+00:00');
+    $projector = new RecordInputProjector;
+    $attributed = $projector->project(new AttemptInput(
+        invocationId: 'run-1',
+        attempt: 2,
+        at: $at,
+        parent: new ParentLink(invocationId: 'parent-1'),
+        model: new ModelInfo(requested: 'requested-model', provider: 'provider-name'),
+    ), 'fake')->toArray();
+    $unattributed = $projector->project(new AttemptInput(
+        invocationId: null,
+        attempt: null,
+        at: $at,
+        model: new ModelInfo(requested: 'requested-model', provider: 'provider-name'),
+        failureClass: RuntimeException::class,
+    ), 'fake')->toArray();
+
+    expect($attributed)->toMatchArray([
+        'operation' => Operation::Agent->value,
+        'invocation_id' => 'run-1',
+        'attempt' => 2,
+        'parent_invocation_id' => 'parent-1',
+    ])->and($unattributed)->toMatchArray([
+        'type' => RecordType::RunFailover->value,
+        'model' => [
+            'requested' => 'requested-model',
+            'provider' => 'provider-name',
+        ],
+        'failure_class' => RuntimeException::class,
+    ])->and($unattributed)->not->toHaveKeys([
+        'operation',
+        'invocation_id',
+        'attempt',
+        'parent_invocation_id',
+        'parent_tool_invocation_id',
+    ]);
+});
+
+it('rejects incomplete source-agnostic failover forms', function (Closure $construct): void {
+    expect($construct)->toThrow(InvalidArgumentException::class);
+})->with([
+    'attributed without attempt' => fn () => new AttemptInput('run-1', null, new DateTimeImmutable),
+    'unattributed with attempt' => fn () => new AttemptInput(null, 1, new DateTimeImmutable, model: new ModelInfo(requested: 'model', provider: 'provider')),
+    'unattributed with parent' => fn () => new AttemptInput(null, null, new DateTimeImmutable, parent: new ParentLink(invocationId: 'parent-1'), model: new ModelInfo(requested: 'model', provider: 'provider')),
+    'unattributed without model' => fn () => new AttemptInput(null, null, new DateTimeImmutable),
+    'unattributed without provider' => fn () => new AttemptInput(null, null, new DateTimeImmutable, model: new ModelInfo(requested: 'model')),
+    'unattributed without requested model' => fn () => new AttemptInput(null, null, new DateTimeImmutable, model: new ModelInfo(provider: 'provider')),
+]);
 
 it('rejects missing required input metadata', function (Closure $construct): void {
     expect($construct)->toThrow(InvalidArgumentException::class);
