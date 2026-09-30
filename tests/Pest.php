@@ -9,5 +9,6 @@ uses(TestCase::class)->in(
     'DropCounterTest.php',
     'DriverRegistrarTest.php',
     'HttpTransportTest.php',
+    'LaravelAiDriverTest.php',
     'QueueShippingTest.php',
 );

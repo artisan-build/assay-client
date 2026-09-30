@@ -9,7 +9,6 @@ use ArtisanBuild\AssayClient\Contracts\EnvelopeDispatcher;
 use ArtisanBuild\AssayClient\Contracts\Transport;
 use ArtisanBuild\AssayClient\Internal\CacheDropCounter;
 use ArtisanBuild\AssayClient\Internal\DriverRegistrar;
-use ArtisanBuild\AssayClient\Internal\NullCaptureDriver;
 use ArtisanBuild\AssayClient\Internal\QueueEnvelopeDispatcher;
 use ArtisanBuild\AssayClient\Jobs\ShipEnvelope;
 use ArtisanBuild\AssayClient\Transport\HttpTransport;
@@ -26,7 +25,7 @@ final class AssayClientServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/assay.php', 'assay');
 
-        $this->app->bindIf(CaptureDriver::class, NullCaptureDriver::class);
+        $this->app->bindIf(CaptureDriver::class, LaravelAiDriver::class);
         $this->app->bind(Transport::class, HttpTransport::class);
         $this->app->bind(EnvelopeDispatcher::class, QueueEnvelopeDispatcher::class);
         $this->app->singleton(fn (Application $app): DropCounter => new CacheDropCounter(
