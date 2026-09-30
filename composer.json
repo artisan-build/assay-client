@@ -17,7 +17,12 @@
     ],
     "require": {
         "php": "^8.3",
+        "artisan-build/bfc-client": "^0.1 || ^0.2",
         "artisan-build/assay-contracts": "^1.0",
+        "illuminate/cache": "^13.0",
+        "illuminate/contracts": "^13.0",
+        "illuminate/http": "^13.0",
+        "illuminate/queue": "^13.0",
         "illuminate/support": "^13.0"
     },
     "require-dev": {
