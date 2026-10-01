@@ -11,6 +11,7 @@ use ArtisanBuild\AssayClient\Records\RunInput;
 use ArtisanBuild\AssayClient\Records\SingleOperationInput;
 use ArtisanBuild\AssayClient\Records\StepInput;
 use ArtisanBuild\AssayClient\Records\ToolCallInput;
+use ArtisanBuild\AssayContracts\CaptureMode;
 use ArtisanBuild\AssayContracts\Operation;
 use ArtisanBuild\AssayContracts\RecordType;
 use ArtisanBuild\AssayContracts\RecordV1;
@@ -31,6 +32,22 @@ final class RecordInputProjector
             $input instanceof SingleOperationInput => $this->operation($input, $source),
             default => throw new InvalidArgumentException('Unsupported recorder input '.get_debug_type($input).'.'),
         };
+    }
+
+    public function projectAttach(ContentAttachInput $input): RecordV1
+    {
+        return new RecordV1(
+            recordId: UuidV7::generate(),
+            source: null,
+            type: RecordType::ContentAttach,
+            operation: null,
+            at: Timestamp::fromDateTime($input->at),
+            capture: CaptureMode::Full,
+            sampled: null,
+            invocationId: $input->invocationId,
+            content: $input->content,
+            targetRecordId: $input->targetRecordId,
+        );
     }
 
     private function run(RunInput $input, string $source): RecordV1

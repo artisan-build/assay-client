@@ -6,6 +6,7 @@ use ArtisanBuild\AssayClient\Contracts\DropCounter;
 use ArtisanBuild\AssayClient\Contracts\EnvelopeDispatcher;
 use ArtisanBuild\AssayClient\Contracts\Transport;
 use ArtisanBuild\AssayClient\Internal\BufferedRecorder;
+use ArtisanBuild\AssayClient\Internal\ContentAttachInput;
 use ArtisanBuild\AssayClient\Jobs\ShipEnvelope;
 use ArtisanBuild\AssayClient\Records\SingleOperationInput;
 use ArtisanBuild\AssayClient\SourceInfo;
@@ -14,10 +15,12 @@ use ArtisanBuild\AssayClient\Tests\Support\InMemoryDropCounter;
 use ArtisanBuild\AssayClient\Transport\PayloadTooLargeException;
 use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\Client;
+use ArtisanBuild\AssayContracts\Content;
 use ArtisanBuild\AssayContracts\EnvelopeCodec;
 use ArtisanBuild\AssayContracts\EnvelopeV1;
 use ArtisanBuild\AssayContracts\Operation;
 use ArtisanBuild\AssayContracts\Outcome;
+use ArtisanBuild\AssayContracts\UuidV7;
 use Illuminate\Contracts\Encryption\Encrypter;
 use Illuminate\Contracts\Queue\Queue;
 use Illuminate\Database\Schema\Blueprint;
@@ -106,6 +109,47 @@ it('uses Laravel queue encryption and serializes primitive job state only', func
     $envelope = EnvelopeCodec::decode($job->envelopeJson);
 
     expect($envelope->records[0]->usage?->toArray())->toBe(['audio_seconds' => 1.25]);
+
+    $reflection = new ReflectionObject($job);
+
+    foreach ($reflection->getProperties() as $property) {
+        $value = $property->getValue($job);
+        expect(is_scalar($value) || $value === null)->toBeTrue("{$property->getName()} is primitive");
+    }
+});
+
+it('queues content attaches as encrypted primitive state without re-filtering buffered content', function (): void {
+    $recorder = new BufferedRecorder(
+        driver: 'fake',
+        source: new SourceInfo('vendor/source', '1.0.0'),
+        client: new Client('artisan-build/assay-client', 'test'),
+        environment: 'testing',
+        deploy: null,
+        batchSize: 1,
+        retryForSeconds: 86400,
+        drops: new InMemoryDropCounter,
+        dispatcher: resolve(EnvelopeDispatcher::class),
+        app: app(),
+    );
+    $targetId = UuidV7::generate();
+    $recorder->attach(new ContentAttachInput(
+        targetRecordId: $targetId,
+        invocationId: 'attach-queue-run',
+        at: new DateTimeImmutable('2026-10-01T12:00:00.123456+00:00'),
+        content: new Content(['output_text' => 'ATTACH-QUEUE-CANARY']),
+    ));
+
+    $payload = (string) DB::table('jobs')->value('payload');
+    /** @var array{data: array{command: string}} $decoded */
+    $decoded = json_decode($payload, true, flags: JSON_THROW_ON_ERROR);
+    $serialized = resolve(Encrypter::class)->decrypt($decoded['data']['command']);
+    $job = unserialize($serialized, ['allowed_classes' => [ShipEnvelope::class]]);
+    $record = EnvelopeCodec::decode($job->envelopeJson)->records[0];
+
+    expect($payload)->not->toContain('ATTACH-QUEUE-CANARY')
+        ->and($record->toArray())->toHaveKeys(['record_id', 'type', 'target_record_id', 'invocation_id', 'at', 'capture', 'content'])
+        ->and((string) $record->targetRecordId)->toBe((string) $targetId)
+        ->and($record->content?->toArray())->toBe(['output_text' => 'ATTACH-QUEUE-CANARY']);
 
     $reflection = new ReflectionObject($job);
 

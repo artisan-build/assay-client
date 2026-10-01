@@ -47,6 +47,7 @@ final class HookBoundary
             failureClass: $original->failureClass,
             failureCapture: $original->failureCapture,
             replayInputsOmitted: $original->replayInputsOmitted,
+            targetRecordId: $original->targetRecordId,
         );
     }
 }

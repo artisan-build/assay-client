@@ -84,21 +84,7 @@ final class BufferedRecorder implements Recorder
 
             $record = $this->deduplicateMessages($record);
 
-            if (! $this->fits([$record])) {
-                $this->incrementTransportSafely();
-
-                return;
-            }
-
-            if ($this->records !== [] && ! $this->fits([...$this->records, $record])) {
-                $this->flush();
-            }
-
-            $this->records[] = $record;
-
-            if (count($this->records) >= $this->batchSize) {
-                $this->flush();
-            }
+            $this->enqueue($record);
         } catch (Throwable) {
             $this->incrementTransportSafely();
         } finally {
@@ -108,6 +94,34 @@ final class BufferedRecorder implements Recorder
                 && $projected->invocationId !== null) {
                 unset($this->sentMessageHashes[$projected->invocationId]);
             }
+        }
+    }
+
+    public function attach(ContentAttachInput $input): void
+    {
+        try {
+            $this->enqueue($this->projector->projectAttach($input));
+        } catch (Throwable) {
+            $this->incrementTransportSafely();
+        }
+    }
+
+    private function enqueue(RecordV1 $record): void
+    {
+        if (! $this->fits([$record])) {
+            $this->incrementTransportSafely();
+
+            return;
+        }
+
+        if ($this->records !== [] && ! $this->fits([...$this->records, $record])) {
+            $this->flush();
+        }
+
+        $this->records[] = $record;
+
+        if (count($this->records) >= $this->batchSize) {
+            $this->flush();
         }
     }
 
