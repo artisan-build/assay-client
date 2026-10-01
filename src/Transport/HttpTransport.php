@@ -22,13 +22,18 @@ final readonly class HttpTransport implements Transport
             return;
         }
 
-        $this->pendingRequest()
+        $response = $this->pendingRequest()
             ->withToken($token)
             ->connectTimeout(max(0.05, (float) config('assay.connect_timeout', 0.5)))
             ->timeout(max(0.05, (float) config('assay.timeout', 5)))
             ->withBody($envelopeJson, 'application/json')
-            ->post($url)
-            ->throw();
+            ->post($url);
+
+        if ($response->status() === 413) {
+            throw new PayloadTooLargeException;
+        }
+
+        $response->throw();
     }
 
     private function pendingRequest(): PendingRequest

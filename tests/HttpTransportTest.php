@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use ArtisanBuild\AssayClient\Transport\HttpTransport;
+use ArtisanBuild\AssayClient\Transport\PayloadTooLargeException;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Request;
@@ -77,4 +78,19 @@ it('falls back safely when the identity macro returns an unexpected value', func
 
     expect($factory->fallbackUsed)->toBeTrue();
     $factory->assertSent(static fn (Request $request): bool => ! $request->hasHeader('X-Test-Identity'));
+});
+
+it('recognizes 413 without exposing request or response content', function (): void {
+    config()->set('assay.url', 'https://assay.test/ingest');
+    config()->set('assay.token', 'test-token');
+    Http::fake(['https://assay.test/ingest' => Http::response('response-content-canary', 413)]);
+
+    try {
+        resolve(HttpTransport::class)->send('{"request-content-canary":true}');
+        $this->fail('Expected the transport to reject the oversized payload.');
+    } catch (PayloadTooLargeException $exception) {
+        expect($exception->getMessage())->toBe('Assay server rejected the envelope as too large.')
+            ->not->toContain('request-content-canary')
+            ->not->toContain('response-content-canary');
+    }
 });

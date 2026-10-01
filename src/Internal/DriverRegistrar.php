@@ -42,6 +42,7 @@ final readonly class DriverRegistrar
                 environment: (string) config('assay.environment'),
                 deploy: is_string($deploy) ? $deploy : null,
                 batchSize: (int) config('assay.batch_size'),
+                maxBatchBytes: (int) config('assay.max_batch_bytes'),
                 retryForSeconds: (int) config('assay.retry_for_seconds'),
                 drops: $this->drops,
                 dispatcher: $this->dispatcher,

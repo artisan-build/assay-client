@@ -9,10 +9,13 @@ use ArtisanBuild\AssayClient\Internal\BufferedRecorder;
 use ArtisanBuild\AssayClient\Jobs\ShipEnvelope;
 use ArtisanBuild\AssayClient\Records\SingleOperationInput;
 use ArtisanBuild\AssayClient\SourceInfo;
+use ArtisanBuild\AssayClient\Tests\Support\CollectingDispatcher;
 use ArtisanBuild\AssayClient\Tests\Support\InMemoryDropCounter;
+use ArtisanBuild\AssayClient\Transport\PayloadTooLargeException;
 use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\Client;
 use ArtisanBuild\AssayContracts\EnvelopeCodec;
+use ArtisanBuild\AssayContracts\EnvelopeV1;
 use ArtisanBuild\AssayContracts\Operation;
 use ArtisanBuild\AssayContracts\Outcome;
 use Illuminate\Contracts\Encryption\Encrypter;
@@ -217,4 +220,132 @@ it('contains drop counter failure while discarding an overdue job', function ():
 
     expect(DB::table('jobs')->where('queue', 'counter-failure')->count())->toBe(0)
         ->and(DB::table('failed_jobs')->count())->toBe(0);
+});
+
+it('recursively splits 413 envelopes in record order with fresh ids and preserved metadata', function (): void {
+    $drops = new InMemoryDropCounter;
+    $drops->incrementTransport();
+    $drops->incrementTransport();
+    $drops->incrementHook();
+    $dispatcher = new CollectingDispatcher;
+    $recorder = new BufferedRecorder(
+        driver: 'fake',
+        source: new SourceInfo('vendor/source', '1.0.0'),
+        client: new Client('artisan-build/assay-client', 'test'),
+        environment: 'testing',
+        deploy: 'deploy-413',
+        batchSize: 5,
+        retryForSeconds: 3600,
+        drops: $drops,
+        dispatcher: $dispatcher,
+    );
+
+    foreach (range(1, 5) as $index) {
+        $recorder->record(new SingleOperationInput(
+            operation: Operation::Embeddings,
+            invocationId: "operation-{$index}",
+            at: new DateTimeImmutable('2026-09-30T12:00:00+00:00'),
+            usage: new Usage(inputTokens: $index),
+            outcome: Outcome::Completed,
+        ));
+    }
+
+    $originalJson = $dispatcher->dispatched[0]['json'];
+    $original = EnvelopeCodec::decode($originalJson);
+    $transport = new class implements Transport
+    {
+        /** @var list<EnvelopeV1> */
+        public array $attempts = [];
+
+        /** @var list<EnvelopeV1> */
+        public array $accepted = [];
+
+        public function send(string $envelopeJson): void
+        {
+            $envelope = EnvelopeCodec::decode($envelopeJson);
+            $this->attempts[] = $envelope;
+
+            if (count($envelope->records) > 2) {
+                throw new PayloadTooLargeException;
+            }
+
+            $this->accepted[] = $envelope;
+        }
+    };
+
+    (new ShipEnvelope($originalJson, time() + 3600))->handle($transport, $drops);
+
+    $originalMetadata = $original->toArray();
+    unset($originalMetadata['envelope_id'], $originalMetadata['records']);
+    $acceptedRecords = [];
+
+    foreach ($transport->attempts as $attempt) {
+        $metadata = $attempt->toArray();
+        unset($metadata['envelope_id'], $metadata['records']);
+        expect($metadata)->toBe($originalMetadata);
+    }
+
+    foreach ($transport->accepted as $accepted) {
+        array_push($acceptedRecords, ...$accepted->records);
+    }
+
+    expect(array_map(static fn ($attempt): string => (string) $attempt->envelopeId, $transport->attempts))
+        ->toHaveCount(5)
+        ->each->toBeString()
+        ->and(array_unique(array_map(static fn ($attempt): string => (string) $attempt->envelopeId, $transport->attempts)))
+        ->toHaveCount(5)
+        ->and(array_map(static fn ($record): string => $record->invocationId, $acceptedRecords))
+        ->toBe(['operation-1', 'operation-2', 'operation-3', 'operation-4', 'operation-5'])
+        ->and(array_map(static fn ($record): array => $record->toArray(), $acceptedRecords))
+        ->toBe(array_map(static fn ($record): array => $record->toArray(), $original->records))
+        ->and($drops->transportTotal())->toBe(2);
+});
+
+it('drops a single-record 413 once without release or a failed job row', function (): void {
+    $drops = new InMemoryDropCounter;
+    $dispatcher = new CollectingDispatcher;
+    $recorder = new BufferedRecorder(
+        driver: 'fake',
+        source: new SourceInfo('vendor/source', '1.0.0'),
+        client: new Client('artisan-build/assay-client', 'test'),
+        environment: 'testing',
+        deploy: null,
+        batchSize: 1,
+        retryForSeconds: 3600,
+        drops: $drops,
+        dispatcher: $dispatcher,
+    );
+    $recorder->record(new SingleOperationInput(
+        operation: Operation::Embeddings,
+        invocationId: 'operation-oversized',
+        at: new DateTimeImmutable('2026-09-30T12:00:00+00:00'),
+        outcome: Outcome::Completed,
+    ));
+    $transport = new class implements Transport
+    {
+        public int $calls = 0;
+
+        public function send(string $envelopeJson): void
+        {
+            $this->calls++;
+
+            throw new PayloadTooLargeException;
+        }
+    };
+    app()->instance(DropCounter::class, $drops);
+    app()->instance(Transport::class, $transport);
+    resolve(Queue::class)->push(new ShipEnvelope($dispatcher->dispatched[0]['json'], time() + 3600), queue: 'single-413');
+
+    $this->artisan('queue:work', [
+        'connection' => 'database',
+        '--queue' => 'single-413',
+        '--once' => true,
+        '--sleep' => 0,
+        '--tries' => 3,
+    ])->assertExitCode(0);
+
+    expect(DB::table('jobs')->where('queue', 'single-413')->count())->toBe(0)
+        ->and(DB::table('failed_jobs')->count())->toBe(0)
+        ->and($transport->calls)->toBe(1)
+        ->and($drops->transportTotal())->toBe(1);
 });

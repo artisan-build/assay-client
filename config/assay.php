@@ -9,6 +9,7 @@ return [
     'environment' => env('ASSAY_ENVIRONMENT', env('APP_ENV', 'production')),
     'deploy' => env('ASSAY_DEPLOY', env('NIGHTWATCH_DEPLOY')),
     'batch_size' => (int) env('ASSAY_BATCH_SIZE', 100),
+    'max_batch_bytes' => (int) env('ASSAY_MAX_BATCH_BYTES', 4_194_304),
     'retry_for_seconds' => (int) env('ASSAY_RETRY_FOR_SECONDS', 86400),
     'retry_delay_seconds' => (int) env('ASSAY_RETRY_DELAY_SECONDS', 60),
     'queue' => env('ASSAY_QUEUE'),

@@ -40,3 +40,5 @@ The harness verifies source identity, exact typed records, usage omission and fr
 ## Configuration
 
 Publish `assay-config` or set `ASSAY_URL` and `ASSAY_TOKEN`. If either is missing, the HTTP transport is inert. The queue job resolves both values only when it handles the already-projected envelope.
+
+`ASSAY_BATCH_SIZE` defaults to 100 and may not exceed the server admission limit of 500. `ASSAY_MAX_BATCH_BYTES` defaults to 4 MiB; the client flushes before that encoded-envelope limit and recursively splits any batch the server rejects as too large.

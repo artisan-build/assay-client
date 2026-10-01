@@ -17,6 +17,7 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\ServiceProvider;
+use InvalidArgumentException;
 use Throwable;
 
 final class AssayClientServiceProvider extends ServiceProvider
@@ -37,6 +38,8 @@ final class AssayClientServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->validateConfiguration();
+
         $this->publishes([
             __DIR__.'/../config/assay.php' => config_path('assay.php'),
         ], 'assay-config');
@@ -73,5 +76,20 @@ final class AssayClientServiceProvider extends ServiceProvider
                 }
             }
         });
+    }
+
+    private function validateConfiguration(): void
+    {
+        $batchSize = (int) config('assay.batch_size');
+
+        if ($batchSize > 500) {
+            throw new InvalidArgumentException('Assay batch_size must not exceed 500.');
+        }
+
+        if ($batchSize < 1
+            || (int) config('assay.retry_for_seconds') < 1
+            || (int) config('assay.max_batch_bytes') < 1) {
+            throw new InvalidArgumentException('Assay batch size, retry bound, and maximum batch bytes must be positive.');
+        }
     }
 }
