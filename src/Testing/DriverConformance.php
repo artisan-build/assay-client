@@ -18,6 +18,7 @@ use ArtisanBuild\AssayClient\Records\RunInput;
 use ArtisanBuild\AssayClient\Records\SingleOperationInput;
 use ArtisanBuild\AssayClient\Records\StepInput;
 use ArtisanBuild\AssayClient\Records\ToolCallInput;
+use ArtisanBuild\AssayContracts\CaptureMode;
 use ArtisanBuild\AssayContracts\Client;
 use ArtisanBuild\AssayContracts\EnvelopeCodec;
 use ArtisanBuild\AssayContracts\RecordType;
@@ -83,6 +84,8 @@ final class DriverConformance
             self::assertRequiredMetadata($record);
         }
 
+        self::assertTreeInheritance($records);
+
         if (serialize($records) !== serialize($scenario->expectedRecords)) {
             throw new ConformanceViolation('Reported records differ from the scenario; check omitted usage metrics, zero manufacturing, and linkage.');
         }
@@ -105,6 +108,49 @@ final class DriverConformance
 
         if (! $hasFailover || count($attempts) < 2) {
             throw new ConformanceViolation('The failover scenario must report a failover and at least two attempt ordinals.');
+        }
+    }
+
+    /** @param list<RecordInput> $records */
+    private static function assertTreeInheritance(array $records): void
+    {
+        /** @var array<string, array{sampled: bool, subject: string|null}> $contexts */
+        $contexts = [];
+
+        foreach ($records as $record) {
+            if (! $record instanceof RunInput
+                && ! $record instanceof AttemptInput
+                && ! $record instanceof OperationStartInput
+                && ! $record instanceof StepInput
+                && ! $record instanceof ToolCallInput
+                && ! $record instanceof SingleOperationInput) {
+                continue;
+            }
+
+            $invocationId = $record->invocationId;
+
+            if ($invocationId === null) {
+                continue;
+            }
+
+            $parentInvocationId = $record->parent?->invocationId;
+            $context = $contexts[$invocationId] ?? ($parentInvocationId === null ? null : ($contexts[$parentInvocationId] ?? null));
+
+            if ($context === null
+                && $record->capture === CaptureMode::Full
+                && (($record instanceof RunInput && $record->type === RecordType::RunStart) || $record instanceof OperationStartInput)) {
+                $context = ['sampled' => $record->sampled, 'subject' => $record->subject];
+            }
+
+            if ($context === null) {
+                continue;
+            }
+
+            if ($record->sampled !== $context['sampled'] || $record->subject !== $context['subject']) {
+                throw new ConformanceViolation('Every descendant must inherit the root sampled decision and frozen subject.');
+            }
+
+            $contexts[$invocationId] = $context;
         }
     }
 
@@ -214,7 +260,7 @@ final class DriverConformance
 
             foreach (EnvelopeCodec::decode($json)->records as $record) {
                 $array = $record->toArray();
-                unset($array['record_id']);
+                unset($array['record_id'], $array['sampled'], $array['subject']);
                 $actual[] = $array;
             }
         }
@@ -224,7 +270,7 @@ final class DriverConformance
 
         foreach ($scenario->expectedRecords as $record) {
             $array = $projector->project($record, $scenario->driverName)->toArray();
-            unset($array['record_id']);
+            unset($array['record_id'], $array['sampled'], $array['subject']);
             $expected[] = $array;
         }
 

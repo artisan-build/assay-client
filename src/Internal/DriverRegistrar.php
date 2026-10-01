@@ -7,6 +7,7 @@ namespace ArtisanBuild\AssayClient\Internal;
 use ArtisanBuild\AssayClient\CaptureDriver;
 use ArtisanBuild\AssayClient\Contracts\DropCounter;
 use ArtisanBuild\AssayClient\Contracts\EnvelopeDispatcher;
+use ArtisanBuild\AssayClient\Sampler;
 use ArtisanBuild\AssayContracts\Client;
 use Composer\InstalledVersions;
 use Illuminate\Contracts\Foundation\Application;
@@ -47,6 +48,15 @@ final readonly class DriverRegistrar
                 drops: $this->drops,
                 dispatcher: $this->dispatcher,
                 app: $this->app,
+                sampler: $this->app->make(Sampler::class),
+                sampleRate: (float) config('assay.sample_rate'),
+                agentSampleRates: (array) config('assay.agent_sample_rates'),
+                alwaysOnFailure: (bool) config('assay.always_on_failure'),
+                failureBufferBytes: (int) config('assay.failure_buffer_bytes'),
+                subjectContextKey: (string) config('assay.subject_context_key'),
+                maxRetainedRoots: (int) config('assay.max_retained_roots'),
+                maxRetainedBufferBytes: (int) config('assay.max_retained_buffer_bytes'),
+                retainedStateTtlSeconds: (int) config('assay.retained_state_ttl_seconds'),
             ));
         } catch (Throwable) {
             try {

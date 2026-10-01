@@ -86,9 +86,8 @@ final readonly class RunInput implements RecordInput
         if ($this->failureCapture !== null
             && ($this->type !== RecordType::RunEnd
                 || $this->outcome !== Outcome::Failed
-                || $this->sampled
-                || $this->capture !== CaptureMode::Full)) {
-            throw new InvalidArgumentException('Failure capture requires an unsampled failed run.end in full capture mode.');
+                || $this->sampled !== false)) {
+            throw new InvalidArgumentException('Failure capture requires an unsampled failed run.end.');
         }
 
         if ($replayInputsOmitted !== null) {

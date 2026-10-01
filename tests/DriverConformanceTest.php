@@ -37,18 +37,18 @@ function conformanceRecords(?int $manufacturedOutput = null, string $failureClas
 
     return [
         new RunInput(RecordType::RunStart, 'run-1', 1, $at, parent: $parent, subject: 'subject-1', model: $model, agent: 'App\\Ai\\SupportAgent'),
-        new StepInput(RecordType::StepEnd, 'run-1', 1, 0, $at, parent: $parent, usage: new Usage(
+        new StepInput(RecordType::StepEnd, 'run-1', 1, 0, $at, parent: $parent, subject: 'subject-1', usage: new Usage(
             inputTokens: 11,
             outputTokens: 12,
             cacheReadInputTokens: 3,
             cacheWriteInputTokens: 4,
             reasoningTokens: 5,
         ), model: $model, agent: 'App\\Ai\\SupportAgent', durationMs: 42.5, finishReason: FinishReason::ToolCalls),
-        new ToolCallInput(RecordType::ToolEnd, 'run-1', 1, 'tool-1', $at, step: 0, parent: $parent, agent: 'App\\Ai\\SupportAgent', tool: 'lookup_order', durationMs: 7.25, outcome: Outcome::Completed),
-        new ToolCallInput(RecordType::ToolApproval, 'run-1', 1, 'tool-2', $at, step: 0, parent: $parent, agent: 'App\\Ai\\SupportAgent', tool: 'refund_order', approval: Approval::Requested),
-        new AttemptInput('run-1', 1, $at, operation: Operation::Agent, parent: $parent, model: $model, agent: 'App\\Ai\\SupportAgent', failureClass: $failureClass),
-        new RunInput(RecordType::RunStart, 'run-1', 2, $at, parent: $parent, model: $model),
-        new RunInput(RecordType::RunEnd, 'run-1', 2, $at, capture: CaptureMode::Full, parent: $parent, usage: new Usage(inputTokens: 2), model: $model, agent: 'App\\Ai\\SupportAgent', finishReason: FinishReason::Error, outcome: Outcome::Failed, failureClass: RuntimeException::class, failureCapture: FailureCapture::Complete, replayInputsOmitted: [ReplayInputOmission::Attachments]),
+        new ToolCallInput(RecordType::ToolEnd, 'run-1', 1, 'tool-1', $at, step: 0, parent: $parent, subject: 'subject-1', agent: 'App\\Ai\\SupportAgent', tool: 'lookup_order', durationMs: 7.25, outcome: Outcome::Completed),
+        new ToolCallInput(RecordType::ToolApproval, 'run-1', 1, 'tool-2', $at, step: 0, parent: $parent, subject: 'subject-1', agent: 'App\\Ai\\SupportAgent', tool: 'refund_order', approval: Approval::Requested),
+        new AttemptInput('run-1', 1, $at, operation: Operation::Agent, parent: $parent, subject: 'subject-1', model: $model, agent: 'App\\Ai\\SupportAgent', failureClass: $failureClass),
+        new RunInput(RecordType::RunStart, 'run-1', 2, $at, parent: $parent, subject: 'subject-1', model: $model),
+        new RunInput(RecordType::RunEnd, 'run-1', 2, $at, capture: CaptureMode::Usage, parent: $parent, subject: 'subject-1', usage: new Usage(inputTokens: 2), model: $model, agent: 'App\\Ai\\SupportAgent', finishReason: FinishReason::Error, outcome: Outcome::Failed, failureClass: RuntimeException::class, failureCapture: FailureCapture::Complete, replayInputsOmitted: [ReplayInputOmission::Attachments]),
         new OperationStartInput(Operation::Embeddings, 'embeddings-1', $at, $parent, CaptureMode::Usage, false, null, $requestedModel),
         new SingleOperationInput(Operation::Embeddings, 'embeddings-1', $at, parent: $parent, usage: new Usage(inputTokens: 8), durationMs: 1.5, finishReason: FinishReason::Unknown, outcome: Outcome::Completed),
         new OperationStartInput(Operation::Image, 'image-a', $at, $parent, CaptureMode::Usage, false, null, $requestedModel),
@@ -128,6 +128,31 @@ it('fails a deliberately broken driver that reports an inapplicable metric', fun
         supportsFailover: true,
     )))->toThrow(ConformanceViolation::class, 'not applicable to reranking');
 });
+
+it('checks source independent sampling and subject inheritance non-vacuously', function (bool $broken): void {
+    $source = new SourceInfo('vendor/tree-source', '1.0.0');
+    $at = new DateTimeImmutable;
+    $subject = 'user:tree';
+    $records = [
+        new RunInput(RecordType::RunStart, 'root', 1, $at, CaptureMode::Full, true, subject: $subject, agent: 'RootAgent'),
+        new RunInput(RecordType::RunStart, 'child', 1, $at, CaptureMode::Full, $broken ? false : true, new ParentLink('root', 'tool'), $broken ? 'changed' : $subject, agent: 'ChildAgent'),
+        new OperationStartInput(Operation::Embeddings, 'embedding', $at, new ParentLink('child', 'child-tool'), CaptureMode::Full, true, $subject, new ModelInfo(requested: 'model', provider: 'provider')),
+    ];
+    $driver = new FakeDriver('tree', $source, static fn (Throwable $failure): array => $records);
+    $assert = fn () => DriverConformance::assert($driver, new DriverScenario(
+        driverName: 'tree',
+        source: $source,
+        exercise: static function (Throwable $failure) use ($driver): void {
+            $driver->capture($failure);
+        },
+        expectedRecords: $records,
+        canary: 'tree-canary',
+    ));
+
+    $broken
+        ? expect($assert)->toThrow(ConformanceViolation::class, 'inherit the root sampled decision and frozen subject')
+        : expect($assert)->not->toThrow(Throwable::class);
+})->with([false, true]);
 
 it('fails a deliberately broken driver that omits operation from an attributed failover', function (): void {
     $source = new SourceInfo('vendor/broken-source', '1.0.0');

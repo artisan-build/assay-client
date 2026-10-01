@@ -193,6 +193,29 @@ it('rejects missing required input metadata', function (Closure $construct): voi
     'operation outcome' => fn () => new SingleOperationInput(Operation::Image, 'image-1', new DateTimeImmutable),
 ]);
 
+it('accepts failure capture only for an explicitly unsampled run', function (): void {
+    $input = new RunInput(
+        RecordType::RunEnd,
+        'run-1',
+        1,
+        new DateTimeImmutable,
+        sampled: false,
+        outcome: Outcome::Failed,
+        failureCapture: FailureCapture::Complete,
+    );
+
+    expect($input->failureCapture)->toBe(FailureCapture::Complete)
+        ->and(fn () => new RunInput(
+            RecordType::RunEnd,
+            'run-2',
+            1,
+            new DateTimeImmutable,
+            sampled: null,
+            outcome: Outcome::Failed,
+            failureCapture: FailureCapture::Complete,
+        ))->toThrow(TypeError::class);
+});
+
 it('rejects inapplicable or unsafe input metadata early', function (Closure $construct): void {
     expect($construct)->toThrow(InvalidArgumentException::class);
 })->with([
@@ -208,7 +231,7 @@ it('rejects inapplicable or unsafe input metadata early', function (Closure $con
     'control in agent' => fn () => new RunInput(RecordType::RunStart, 'run-1', 1, new DateTimeImmutable, agent: "App\\Ai\nAgent"),
     'usage on run start' => fn () => new RunInput(RecordType::RunStart, 'run-1', 1, new DateTimeImmutable, usage: new Usage(inputTokens: 1)),
     'reranking output tokens' => fn () => new SingleOperationInput(Operation::Reranking, 'reranking-1', new DateTimeImmutable, usage: new Usage(outputTokens: 1), outcome: Outcome::Completed),
-    'failure capture outside full mode' => fn () => new RunInput(RecordType::RunEnd, 'run-1', 1, new DateTimeImmutable, outcome: Outcome::Failed, failureCapture: FailureCapture::Complete),
+    'failure capture on sampled run' => fn () => new RunInput(RecordType::RunEnd, 'run-1', 1, new DateTimeImmutable, sampled: true, outcome: Outcome::Failed, failureCapture: FailureCapture::Complete),
     'empty replay omissions' => fn () => new RunInput(RecordType::RunEnd, 'run-1', 1, new DateTimeImmutable, outcome: Outcome::Completed, replayInputsOmitted: []),
     'agent operation start' => fn () => new OperationStartInput(Operation::Agent, 'run-1', new DateTimeImmutable, null, CaptureMode::Usage, false, null, new ModelInfo(requested: 'model', provider: 'provider')),
     'operation start without provider' => fn () => new OperationStartInput(Operation::Image, 'image-1', new DateTimeImmutable, null, CaptureMode::Usage, false, null, new ModelInfo(requested: 'model')),

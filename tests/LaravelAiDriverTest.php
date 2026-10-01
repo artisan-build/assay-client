@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use ArtisanBuild\AssayClient\Internal\BufferedRecorder;
 use ArtisanBuild\AssayClient\Internal\DroppedRecordInput;
+use ArtisanBuild\AssayClient\Internal\TreeLifecycleRecorder;
 use ArtisanBuild\AssayClient\Jobs\ShipEnvelope;
 use ArtisanBuild\AssayClient\LaravelAiDriver;
 use ArtisanBuild\AssayClient\ModelInfo;
@@ -25,14 +26,17 @@ use ArtisanBuild\AssayClient\Transport\HttpTransport;
 use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\CaptureMode;
 use ArtisanBuild\AssayContracts\Client;
+use ArtisanBuild\AssayContracts\EnvelopeCodec;
 use ArtisanBuild\AssayContracts\FinishReason as ContractFinishReason;
 use ArtisanBuild\AssayContracts\Operation;
 use ArtisanBuild\AssayContracts\Outcome;
 use ArtisanBuild\AssayContracts\RecordType;
+use ArtisanBuild\AssayContracts\RecordV1;
 use ArtisanBuild\AssayContracts\ReplayInputOmission;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Http\Client\Request as HttpRequest;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Http;
 use Laravel\Ai\Agents\SummarizeAgent;
 use Laravel\Ai\Ai;
@@ -190,9 +194,56 @@ final class LaravelAiFailingRecorder implements Recorder
     public function flush(): void {}
 }
 
+final class LaravelAiLifecycleRecorder implements Recorder, TreeLifecycleRecorder
+{
+    /** @var list<string> */
+    public array $retained = [];
+
+    /** @var list<string> */
+    public array $released = [];
+
+    public bool $failNextApproval = false;
+
+    public function __construct(private readonly BufferedRecorder $recorder) {}
+
+    public function record(RecordInput $input): void
+    {
+        if ($this->failNextApproval && $input instanceof ToolCallInput && $input->type === RecordType::ToolApproval) {
+            $this->failNextApproval = false;
+
+            throw new RuntimeException('Injected approval failure.');
+        }
+
+        $this->recorder->record($input);
+    }
+
+    public function flush(): void
+    {
+        $this->recorder->flush();
+    }
+
+    public function retainTreeContext(string $invocationId, ?Closure $onForcedRelease = null): void
+    {
+        $this->retained[] = $invocationId;
+        $this->recorder->retainTreeContext($invocationId, $onForcedRelease);
+    }
+
+    public function releaseTreeContext(string $invocationId): void
+    {
+        $this->released[] = $invocationId;
+        $this->recorder->releaseTreeContext($invocationId);
+    }
+
+    public function sweepTreeContexts(): void
+    {
+        $this->recorder->sweepTreeContexts();
+    }
+}
+
 function laravelAiProvider(Dispatcher $events, string $name): TextProvider
 {
     $manager = new AiManager(app());
+    app()->instance(AiManager::class, $manager);
     app()['config']->set("ai.providers.{$name}", [
         'driver' => 'openai',
         'name' => $name,
@@ -201,6 +252,39 @@ function laravelAiProvider(Dispatcher $events, string $name): TextProvider
     ]);
 
     return $manager->textProvider($name);
+}
+
+function retainLaravelAiApprovalLifecycle(
+    Dispatcher $events,
+    TextProvider $provider,
+    SummarizeAgent $agent,
+    string $invocationId,
+): void {
+    $prompt = new AgentPrompt(
+        $agent,
+        'safe',
+        [],
+        $provider,
+        'model-a',
+        invocationId: $invocationId,
+        approvalDecisions: Decisions::from(['approval-id' => Decision::approve()]),
+    );
+    $events->dispatch(new PromptingAgent($invocationId, $prompt));
+    $events->dispatch(new StartingStep(
+        $invocationId,
+        0,
+        $agent,
+        $provider,
+        'model-a',
+        true,
+        [new UserMessage('private-'.$invocationId)],
+        null,
+    ));
+    $events->dispatch(new AgentPrompted(
+        $invocationId,
+        $prompt,
+        new AgentResponse($invocationId, 'safe', new TextUsage, new Meta($provider->name(), 'model-a')),
+    ));
 }
 
 it('passes DriverConformance with projected v1 agent events', function (): void {
@@ -666,6 +750,362 @@ it('preserves and prunes approval linkage in terminal-first production order', f
         ->and($decisions)->not->toHaveKeys(['approval-requested', 'approval-resolved']);
 });
 
+it('releases buffered tree context when an approval lifecycle carries an empty collection', function (): void {
+    config()->set('assay.capture', 'full');
+    $events = new Dispatcher;
+    $dispatcher = new CollectingDispatcher;
+    $buffered = new BufferedRecorder(
+        'laravel-ai',
+        new SourceInfo('laravel/ai', 'test'),
+        new Client('artisan-build/assay-client', 'test'),
+        'testing',
+        null,
+        100,
+        86400,
+        new InMemoryDropCounter,
+        $dispatcher,
+        app(),
+        sampleRate: 0.0,
+    );
+    $lifecycle = new LaravelAiLifecycleRecorder($buffered);
+    (new LaravelAiDriver($events))->register($lifecycle);
+    $provider = laravelAiProvider($events, 'empty-approval');
+    $agent = new SummarizeAgent;
+    $prompt = new AgentPrompt(
+        $agent,
+        'safe',
+        [],
+        $provider,
+        'model-a',
+        invocationId: 'empty-approval',
+    );
+    $response = (new AgentResponse('empty-approval', 'safe', new TextUsage, new Meta('empty-approval', 'model-a')))
+        ->withPendingApprovals(collect([new PendingApproval('unused', 'safe_tool', [], null)]));
+    $events->dispatch(new PromptingAgent('empty-approval', $prompt));
+    $events->dispatch(new AgentPrompted('empty-approval', $prompt, $response));
+    $events->dispatch(new ToolApprovalRequested('empty-approval', $agent, collect()));
+
+    expect($lifecycle->retained)->toBe(['empty-approval'])
+        ->and($lifecycle->released)->toBe(['empty-approval'])
+        ->and((new ReflectionProperty($buffered, 'rootStates'))->getValue($buffered))->toBe([])
+        ->and((new ReflectionProperty($buffered, 'invocationRoots'))->getValue($buffered))->toBe([])
+        ->and((new ReflectionProperty($buffered, 'retainedTreeContexts'))->getValue($buffered))->toBe([]);
+});
+
+it('inherits one tree decision through both approval events and then prunes lifecycle state', function (float $sampleRate, CaptureMode $capture, bool $sampled): void {
+    config()->set('assay.capture', 'full');
+    Context::add('assay.subject', 'frozen-subject');
+    $events = new Dispatcher;
+    $dispatcher = new CollectingDispatcher;
+    $buffered = new BufferedRecorder(
+        'laravel-ai',
+        new SourceInfo('laravel/ai', 'test'),
+        new Client('artisan-build/assay-client', 'test'),
+        'testing',
+        null,
+        100,
+        86400,
+        new InMemoryDropCounter,
+        $dispatcher,
+        app(),
+        sampleRate: $sampleRate,
+    );
+    $lifecycle = new LaravelAiLifecycleRecorder($buffered);
+    $driver = new LaravelAiDriver($events);
+    $driver->register($lifecycle);
+    $provider = laravelAiProvider($events, 'dual-approval');
+    $agent = new SummarizeAgent;
+    $prompt = new AgentPrompt(
+        $agent,
+        'safe',
+        [],
+        $provider,
+        'model-a',
+        invocationId: 'dual-approval',
+        approvalDecisions: Decisions::from(['old-approval' => Decision::approve()]),
+    );
+    $response = (new AgentResponse('dual-approval', 'safe', new TextUsage, new Meta('dual-approval', 'model-a')))
+        ->withPendingApprovals(collect([new PendingApproval('new-approval', 'new_tool', [], null)]));
+
+    $events->dispatch(new PromptingAgent('dual-approval', $prompt));
+    $events->dispatch(new AgentPrompted('dual-approval', $prompt, $response));
+    $events->dispatch(new ToolApprovalRequested('dual-approval', $agent, $response->pendingApprovals));
+    $events->dispatch(new ToolApprovalResolved('dual-approval', $agent, collect([
+        new ToolResult('old-approval', 'old_tool', [], 'safe'),
+    ])));
+    $buffered->flush();
+
+    $records = collect($dispatcher->dispatched)
+        ->flatMap(static fn (array $dispatch): array => EnvelopeCodec::decode($dispatch['json'])->records);
+    $approvals = $records
+        ->filter(static fn (RecordV1 $record): bool => $record->type === RecordType::ToolApproval)
+        ->values();
+    $invocations = (new ReflectionProperty($driver, 'invocations'))->getValue($driver);
+
+    expect($approvals)->toHaveCount(2)
+        ->and($approvals->pluck('approval')->map->value->all())->toBe(['requested', 'approved']);
+
+    foreach ($approvals as $approval) {
+        expect($approval->capture)->toBe($capture)
+            ->and($approval->sampled)->toBe($sampled)
+            ->and($approval->subject)->toBe('frozen-subject');
+    }
+
+    expect($lifecycle->retained)->toBe(['dual-approval'])
+        ->and($lifecycle->released)->toBe(['dual-approval']);
+
+    foreach (['approvalDecisions', 'approvalEventsRemaining', 'terminalizingApprovals', 'forcedApprovalReleases'] as $property) {
+        expect((new ReflectionProperty($driver, $property))->getValue($driver))->toBe([]);
+    }
+
+    foreach (['attempts', 'parents', 'replayInputOmissions', 'approvalSnapshots'] as $property) {
+        expect((new ReflectionProperty($invocations, $property))->getValue($invocations))->toBe([]);
+    }
+
+    foreach (['records', 'sentMessageHashes', 'invocationRoots', 'rootStates', 'retainedTreeContexts', 'retainedRoots'] as $property) {
+        expect((new ReflectionProperty($buffered, $property))->getValue($buffered))->toBe([]);
+    }
+})->with([
+    'unsampled full' => [0.0, CaptureMode::Usage, false],
+    'sampled full' => [1.0, CaptureMode::Full, true],
+]);
+
+it('uses the official fake gateway guard and leaves no lifecycle state after success', function (): void {
+    config()->set('assay.capture', 'full');
+    $events = resolve(Illuminate\Contracts\Events\Dispatcher::class);
+    expect($events)->toBeInstanceOf(Dispatcher::class);
+    assert($events instanceof Dispatcher);
+    laravelAiProvider($events, 'official-fake');
+    $dispatcher = new CollectingDispatcher;
+    $drops = new InMemoryDropCounter;
+    $buffered = new BufferedRecorder(
+        'laravel-ai',
+        new SourceInfo('laravel/ai', 'test'),
+        new Client('artisan-build/assay-client', 'test'),
+        'testing',
+        null,
+        100,
+        86400,
+        $drops,
+        $dispatcher,
+        app(),
+        sampleRate: 0.0,
+    );
+    $driver = new LaravelAiDriver($events);
+    $driver->register($buffered);
+    SummarizeAgent::fake(['safe response']);
+
+    (new SummarizeAgent)->prompt(
+        Decisions::from(['approval-id' => Decision::approve()]),
+        provider: 'official-fake',
+        model: 'model-a',
+    );
+    $buffered->flush();
+
+    $invocations = (new ReflectionProperty($driver, 'invocations'))->getValue($driver);
+    foreach (['approvalDecisions', 'approvalEventsRemaining', 'terminalizingApprovals', 'forcedApprovalReleases'] as $property) {
+        expect((new ReflectionProperty($driver, $property))->getValue($driver))->toBe([]);
+    }
+    foreach (['attempts', 'parents', 'replayInputOmissions', 'approvalSnapshots'] as $property) {
+        expect((new ReflectionProperty($invocations, $property))->getValue($invocations))->toBe([]);
+    }
+    foreach (['records', 'sentMessageHashes', 'invocationRoots', 'rootStates', 'retainedTreeContexts', 'retainedRoots'] as $property) {
+        expect((new ReflectionProperty($buffered, $property))->getValue($buffered))->toBe([]);
+    }
+    expect($drops->transportTotal())->toBe(0);
+});
+
+it('expires a missing approval event after ttl and atomically releases every lifecycle map', function (): void {
+    config()->set('assay.capture', 'full');
+    $now = new DateTimeImmutable('2026-10-01T12:00:00+00:00');
+    $clock = static function () use (&$now): DateTimeImmutable {
+        return $now;
+    };
+    $events = new Dispatcher;
+    $provider = laravelAiProvider($events, 'approval-ttl');
+    $agent = new SummarizeAgent;
+    $dispatcher = new CollectingDispatcher;
+    $drops = new InMemoryDropCounter;
+    $buffered = new BufferedRecorder(
+        'laravel-ai',
+        new SourceInfo('laravel/ai', 'test'),
+        new Client('artisan-build/assay-client', 'test'),
+        'testing',
+        null,
+        100,
+        86400,
+        $drops,
+        $dispatcher,
+        app(),
+        sampleRate: 0.0,
+        retainedStateTtlSeconds: 60,
+        clock: $clock,
+    );
+    $driver = new LaravelAiDriver($events, $clock);
+    $driver->register($buffered);
+    retainLaravelAiApprovalLifecycle($events, $provider, $agent, 'missing-event');
+
+    $now = $now->modify('+60 seconds');
+    $buffered->sweepTreeContexts();
+    $buffered->flush();
+
+    $invocations = (new ReflectionProperty($driver, 'invocations'))->getValue($driver);
+    foreach (['approvalDecisions', 'approvalEventsRemaining', 'terminalizingApprovals', 'forcedApprovalReleases'] as $property) {
+        expect((new ReflectionProperty($driver, $property))->getValue($driver))->toBe([]);
+    }
+    foreach (['attempts', 'parents', 'replayInputOmissions', 'approvalSnapshots'] as $property) {
+        expect((new ReflectionProperty($invocations, $property))->getValue($invocations))->toBe([]);
+    }
+    foreach (['records', 'sentMessageHashes', 'invocationRoots', 'rootStates', 'retainedTreeContexts', 'retainedRoots'] as $property) {
+        expect((new ReflectionProperty($buffered, $property))->getValue($buffered))->toBe([]);
+    }
+    expect($drops->transportTotal())->toBe(1)
+        ->and(collect($dispatcher->dispatched)
+            ->flatMap(static fn (array $dispatch): array => EnvelopeCodec::decode($dispatch['json'])->records)
+            ->where('type', RecordType::ContentAttach))->toBeEmpty();
+});
+
+it('evicts retained root 129 oldest first at the default count bound', function (): void {
+    config()->set('assay.capture', 'full');
+    $events = new Dispatcher;
+    $provider = laravelAiProvider($events, 'approval-count-cap');
+    $agent = new SummarizeAgent;
+    $drops = new InMemoryDropCounter;
+    $buffered = new BufferedRecorder(
+        'laravel-ai',
+        new SourceInfo('laravel/ai', 'test'),
+        new Client('artisan-build/assay-client', 'test'),
+        'testing',
+        null,
+        500,
+        86400,
+        $drops,
+        new CollectingDispatcher,
+        app(),
+        sampleRate: 0.0,
+    );
+    $driver = new LaravelAiDriver($events);
+    $driver->register($buffered);
+
+    foreach (range(1, 129) as $index) {
+        retainLaravelAiApprovalLifecycle($events, $provider, $agent, 'retained-'.$index);
+    }
+
+    $invocations = (new ReflectionProperty($driver, 'invocations'))->getValue($driver);
+    $decisions = (new ReflectionProperty($driver, 'approvalDecisions'))->getValue($driver);
+    $remaining = (new ReflectionProperty($driver, 'approvalEventsRemaining'))->getValue($driver);
+    $snapshots = (new ReflectionProperty($invocations, 'approvalSnapshots'))->getValue($invocations);
+    $hashes = (new ReflectionProperty($buffered, 'sentMessageHashes'))->getValue($buffered);
+    $roots = (new ReflectionProperty($buffered, 'invocationRoots'))->getValue($buffered);
+    $states = (new ReflectionProperty($buffered, 'rootStates'))->getValue($buffered);
+    $retained = (new ReflectionProperty($buffered, 'retainedTreeContexts'))->getValue($buffered);
+    $retainedRoots = (new ReflectionProperty($buffered, 'retainedRoots'))->getValue($buffered);
+
+    foreach ([$decisions, $remaining, $snapshots, $roots, $states, $retained, $retainedRoots] as $state) {
+        expect($state)->toHaveCount(128)
+            ->and($state)->not->toHaveKey('retained-1')
+            ->and($state)->toHaveKeys(['retained-2', 'retained-129']);
+    }
+    expect($hashes)->toBe([])
+        ->and($drops->transportTotal())->toBe(1);
+});
+
+it('does not recreate driver state when the current terminal root exceeds the byte cap', function (): void {
+    config()->set('assay.capture', 'full');
+    $events = new Dispatcher;
+    $provider = laravelAiProvider($events, 'approval-current-byte-cap');
+    $agent = new SummarizeAgent;
+    $drops = new InMemoryDropCounter;
+    $buffered = new BufferedRecorder(
+        'laravel-ai',
+        new SourceInfo('laravel/ai', 'test'),
+        new Client('artisan-build/assay-client', 'test'),
+        'testing',
+        null,
+        100,
+        86400,
+        $drops,
+        new CollectingDispatcher,
+        app(),
+        sampleRate: 0.0,
+        maxRetainedBufferBytes: 1,
+    );
+    $driver = new LaravelAiDriver($events);
+    $driver->register($buffered);
+
+    retainLaravelAiApprovalLifecycle($events, $provider, $agent, 'current-byte-cap');
+
+    $invocations = (new ReflectionProperty($driver, 'invocations'))->getValue($driver);
+    foreach (['approvalDecisions', 'approvalEventsRemaining', 'terminalizingApprovals', 'forcedApprovalReleases'] as $property) {
+        expect((new ReflectionProperty($driver, $property))->getValue($driver))->toBe([]);
+    }
+    foreach (['attempts', 'parents', 'replayInputOmissions', 'approvalSnapshots'] as $property) {
+        expect((new ReflectionProperty($invocations, $property))->getValue($invocations))->toBe([]);
+    }
+    foreach (['sentMessageHashes', 'invocationRoots', 'rootStates', 'retainedTreeContexts', 'retainedRoots'] as $property) {
+        expect((new ReflectionProperty($buffered, $property))->getValue($buffered))->toBe([]);
+    }
+    expect($drops->transportTotal())->toBe(1);
+});
+
+it('releases dual-approval lifecycle state once after a requested-listener failure', function (): void {
+    config()->set('assay.capture', 'full');
+    $events = new Dispatcher;
+    $dispatcher = new CollectingDispatcher;
+    $buffered = new BufferedRecorder(
+        'laravel-ai',
+        new SourceInfo('laravel/ai', 'test'),
+        new Client('artisan-build/assay-client', 'test'),
+        'testing',
+        null,
+        100,
+        86400,
+        new InMemoryDropCounter,
+        $dispatcher,
+        app(),
+        sampleRate: 0.0,
+    );
+    $lifecycle = new LaravelAiLifecycleRecorder($buffered);
+    $driver = new LaravelAiDriver($events);
+    $driver->register($lifecycle);
+    $provider = laravelAiProvider($events, 'approval-failure');
+    $agent = new SummarizeAgent;
+    $prompt = new AgentPrompt(
+        $agent,
+        'safe',
+        [],
+        $provider,
+        'model-a',
+        invocationId: 'approval-failure',
+        approvalDecisions: Decisions::from(['old-approval' => Decision::approve()]),
+    );
+    $response = (new AgentResponse('approval-failure', 'safe', new TextUsage, new Meta('approval-failure', 'model-a')))
+        ->withPendingApprovals(collect([new PendingApproval('new-approval', 'new_tool', [], null)]));
+
+    $events->dispatch(new PromptingAgent('approval-failure', $prompt));
+    $events->dispatch(new AgentPrompted('approval-failure', $prompt, $response));
+    $lifecycle->failNextApproval = true;
+    $events->dispatch(new ToolApprovalRequested('approval-failure', $agent, $response->pendingApprovals));
+    expect($lifecycle->released)->toBe([]);
+    $events->dispatch(new ToolApprovalResolved('approval-failure', $agent, collect([
+        new ToolResult('old-approval', 'old_tool', [], 'safe'),
+    ])));
+
+    $invocations = (new ReflectionProperty($driver, 'invocations'))->getValue($driver);
+    expect($lifecycle->retained)->toBe(['approval-failure'])
+        ->and($lifecycle->released)->toBe(['approval-failure'])
+        ->and((new ReflectionProperty($driver, 'approvalDecisions'))->getValue($driver))->toBe([])
+        ->and((new ReflectionProperty($driver, 'approvalEventsRemaining'))->getValue($driver))->toBe([]);
+
+    foreach (['attempts', 'parents', 'replayInputOmissions', 'approvalSnapshots'] as $property) {
+        expect((new ReflectionProperty($invocations, $property))->getValue($invocations))->toBe([]);
+    }
+
+    foreach (['sentMessageHashes', 'invocationRoots', 'rootStates', 'retainedTreeContexts'] as $property) {
+        expect((new ReflectionProperty($buffered, $property))->getValue($buffered))->toBe([]);
+    }
+});
+
 it('clears invocation and decision state after projection and recording failures', function (): void {
     $events = new Dispatcher;
     $recorder = new LaravelAiFailingRecorder;
@@ -730,13 +1170,19 @@ it('clears invocation and decision state after projection and recording failures
     $recorder->failApproval = true;
     $events->dispatch(new ToolApprovalRequested('approval-recording-failure', $agent, $approvalFailureResponse->pendingApprovals));
     $recorder->failApproval = false;
+    $events->dispatch(new ToolApprovalResolved('approval-recording-failure', $agent, collect([
+        new ToolResult('approval-failure-id', 'safe_tool', [], 'safe'),
+    ])));
 
     $starts = collect($recorder->records)
         ->filter(static fn (RecordInput $record): bool => $record instanceof RunInput && $record->type === RecordType::RunStart)
         ->groupBy(static fn (RunInput $record): string => $record->invocationId);
-    $resolved = collect($recorder->records)->last(static fn (RecordInput $record): bool => $record instanceof ToolCallInput && $record->type === RecordType::ToolApproval);
+    $resolved = collect($recorder->records)->last(static fn (RecordInput $record): bool => $record instanceof ToolCallInput
+        && $record->type === RecordType::ToolApproval
+        && $record->invocationId === 'recording-failure');
     $invocations = (new ReflectionProperty($driver, 'invocations'))->getValue($driver);
     $decisions = (new ReflectionProperty($driver, 'approvalDecisions'))->getValue($driver);
+    $remaining = (new ReflectionProperty($driver, 'approvalEventsRemaining'))->getValue($driver);
 
     expect($starts['projection-failure']->last()->attempt)->toBe(1)
         ->and($starts['recording-failure']->last()->attempt)->toBe(1)
@@ -746,7 +1192,8 @@ it('clears invocation and decision state after projection and recording failures
         ->and($resolved->parent)->toEqual($freshParent)
         ->and($invocations->approvalSnapshot('recording-failure'))->toBeNull()
         ->and($invocations->approvalSnapshot('approval-recording-failure'))->toBeNull()
-        ->and($decisions)->not->toHaveKeys(['recording-failure', 'approval-recording-failure']);
+        ->and($decisions)->not->toHaveKeys(['recording-failure', 'approval-recording-failure'])
+        ->and($remaining)->toBe([]);
 });
 
 it('projects step tool failure and approval metadata without content', function (): void {

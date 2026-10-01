@@ -12,4 +12,5 @@ uses(TestCase::class)->in(
     'HttpTransportTest.php',
     'LaravelAiDriverTest.php',
     'QueueShippingTest.php',
+    'SamplingTest.php',
 );

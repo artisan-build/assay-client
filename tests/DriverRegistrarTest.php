@@ -63,3 +63,37 @@ it('contains driver registration failures and counts the transport drop', functi
 
     expect($drops->transportTotal())->toBe(1);
 });
+
+it('wires retained lifecycle bounds into the buffered recorder', function (): void {
+    $driver = new class implements CaptureDriver
+    {
+        public ?Recorder $recorder = null;
+
+        public function name(): string
+        {
+            return 'configured';
+        }
+
+        public function source(): ?SourceInfo
+        {
+            return new SourceInfo('vendor/source', '1.0.0');
+        }
+
+        public function register(Recorder $recorder): void
+        {
+            $this->recorder = $recorder;
+        }
+    };
+    config()->set('assay.max_retained_roots', 12);
+    config()->set('assay.max_retained_buffer_bytes', 3456);
+    config()->set('assay.retained_state_ttl_seconds', 78);
+    app()->instance(CaptureDriver::class, $driver);
+
+    (new DriverRegistrar(app(), new InMemoryDropCounter, new CollectingDispatcher))->register();
+
+    expect($driver->recorder)->not->toBeNull();
+    assert($driver->recorder instanceof Recorder);
+    expect((new ReflectionProperty($driver->recorder, 'maxRetainedRoots'))->getValue($driver->recorder))->toBe(12)
+        ->and((new ReflectionProperty($driver->recorder, 'maxRetainedBufferBytes'))->getValue($driver->recorder))->toBe(3456)
+        ->and((new ReflectionProperty($driver->recorder, 'retainedStateTtlSeconds'))->getValue($driver->recorder))->toBe(78);
+});
