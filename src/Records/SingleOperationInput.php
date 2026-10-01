@@ -10,6 +10,7 @@ use ArtisanBuild\AssayClient\ParentLink;
 use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\CaptureMode;
+use ArtisanBuild\AssayContracts\Content;
 use ArtisanBuild\AssayContracts\FinishReason;
 use ArtisanBuild\AssayContracts\Operation;
 use ArtisanBuild\AssayContracts\Outcome;
@@ -35,6 +36,7 @@ final readonly class SingleOperationInput implements RecordInput
         public ?FinishReason $finishReason = null,
         public ?Outcome $outcome = null,
         public ?string $failureClass = null,
+        public ?Content $content = null,
     ) {
         if ($this->operation === Operation::Agent) {
             throw new InvalidArgumentException('Single-operation input cannot use the agent operation.');
@@ -63,5 +65,9 @@ final readonly class SingleOperationInput implements RecordInput
         }
 
         $this->at = InputValidation::time($at);
+
+        if ($this->content !== null && $this->capture !== CaptureMode::Full) {
+            throw new InvalidArgumentException('Content requires full capture.');
+        }
     }
 }

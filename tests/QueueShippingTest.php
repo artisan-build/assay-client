@@ -80,6 +80,7 @@ it('uses Laravel queue encryption and serializes primitive job state only', func
         retryForSeconds: 86400,
         drops: new InMemoryDropCounter,
         dispatcher: resolve(EnvelopeDispatcher::class),
+        app: app(),
     );
     $recorder->record(new SingleOperationInput(
         operation: Operation::Transcription,
@@ -238,6 +239,7 @@ it('recursively splits 413 envelopes in record order with fresh ids and preserve
         retryForSeconds: 3600,
         drops: $drops,
         dispatcher: $dispatcher,
+        app: app(),
     );
 
     foreach (range(1, 5) as $index) {
@@ -314,6 +316,7 @@ it('drops a single-record 413 once without release or a failed job row', functio
         retryForSeconds: 3600,
         drops: $drops,
         dispatcher: $dispatcher,
+        app: app(),
     );
     $recorder->record(new SingleOperationInput(
         operation: Operation::Embeddings,

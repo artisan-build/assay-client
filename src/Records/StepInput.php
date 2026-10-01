@@ -10,6 +10,7 @@ use ArtisanBuild\AssayClient\ParentLink;
 use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\CaptureMode;
+use ArtisanBuild\AssayContracts\Content;
 use ArtisanBuild\AssayContracts\FinishReason;
 use ArtisanBuild\AssayContracts\Operation;
 use ArtisanBuild\AssayContracts\RecordType;
@@ -37,6 +38,7 @@ final readonly class StepInput implements RecordInput
         public ?float $durationMs = null,
         public ?FinishReason $finishReason = null,
         public ?string $failureClass = null,
+        public ?Content $content = null,
     ) {
         if (! in_array($this->type, [RecordType::StepStart, RecordType::StepEnd, RecordType::StepFail], true)) {
             throw new InvalidArgumentException('Step input type must be step.start, step.end, or step.fail.');
@@ -79,5 +81,9 @@ final readonly class StepInput implements RecordInput
         }
 
         $this->at = InputValidation::time($at);
+
+        if ($this->content !== null && $this->capture !== CaptureMode::Full) {
+            throw new InvalidArgumentException('Content requires full capture.');
+        }
     }
 }

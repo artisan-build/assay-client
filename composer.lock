@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "3eb7831d7509b62fa9e69dcd98c9b9a8",
+    "content-hash": "43543b0cbd75513d70a1fd8ba5f6ad23",
     "packages": [
         {
             "name": "artisan-build/assay-contracts",
@@ -123,6 +123,51 @@
                 "source": "https://github.com/artisan-build/bfc-client/tree/v0.2.0"
             },
             "time": "2026-09-15T14:43:18+00:00"
+        },
+        {
+            "name": "artisan-build/built-for-cloud-contracts",
+            "version": "v0.4.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/artisan-build/built-for-cloud-contracts.git",
+                "reference": "2206024671444388a2db018bc392a33c14720b91"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/artisan-build/built-for-cloud-contracts/zipball/2206024671444388a2db018bc392a33c14720b91",
+                "reference": "2206024671444388a2db018bc392a33c14720b91",
+                "shasum": ""
+            },
+            "require": {
+                "php": "^8.4"
+            },
+            "require-dev": {
+                "laravel/pint": "^1.27",
+                "pestphp/pest": "^4.0",
+                "phpstan/phpstan": "^2.1"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "ArtisanBuild\\BuiltForCloudContracts\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "description": "Pure protocol contracts shared by Built for Cloud and Scalpels.",
+            "keywords": [
+                "artisan-build",
+                "built-for-cloud",
+                "contracts",
+                "scalpels"
+            ],
+            "support": {
+                "issues": "https://github.com/artisan-build/built-for-cloud-contracts/issues",
+                "source": "https://github.com/artisan-build/built-for-cloud-contracts/tree/v0.4.0"
+            },
+            "time": "2026-09-30T09:01:41+00:00"
         },
         {
             "name": "brick/math",
@@ -10389,7 +10434,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.3"
+        "php": "^8.4"
     },
     "platform-dev": {},
     "plugin-api-version": "2.9.0"

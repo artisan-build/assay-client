@@ -46,6 +46,7 @@ final readonly class DriverRegistrar
                 retryForSeconds: (int) config('assay.retry_for_seconds'),
                 drops: $this->drops,
                 dispatcher: $this->dispatcher,
+                app: $this->app,
             ));
         } catch (Throwable) {
             try {

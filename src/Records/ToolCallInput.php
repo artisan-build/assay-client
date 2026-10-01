@@ -10,6 +10,7 @@ use ArtisanBuild\AssayClient\ParentLink;
 use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayContracts\Approval;
 use ArtisanBuild\AssayContracts\CaptureMode;
+use ArtisanBuild\AssayContracts\Content;
 use ArtisanBuild\AssayContracts\Outcome;
 use ArtisanBuild\AssayContracts\RecordType;
 use DateTimeImmutable;
@@ -38,6 +39,7 @@ final readonly class ToolCallInput implements RecordInput
         public ?Outcome $outcome = null,
         public ?Approval $approval = null,
         public ?string $failureClass = null,
+        public ?Content $content = null,
     ) {
         if (! in_array($this->type, [RecordType::ToolStart, RecordType::ToolEnd, RecordType::ToolApproval], true)) {
             throw new InvalidArgumentException('Tool input type must be tool.start, tool.end, or tool.approval.');
@@ -84,5 +86,9 @@ final readonly class ToolCallInput implements RecordInput
         }
 
         $this->at = InputValidation::time($at);
+
+        if ($this->content !== null && $this->capture !== CaptureMode::Full) {
+            throw new InvalidArgumentException('Content requires full capture.');
+        }
     }
 }

@@ -14,6 +14,7 @@ use ArtisanBuild\AssayClient\Records\StepInput;
 use ArtisanBuild\AssayClient\Records\ToolCallInput;
 use ArtisanBuild\AssayContracts\Approval;
 use ArtisanBuild\AssayContracts\CaptureMode;
+use ArtisanBuild\AssayContracts\Content;
 use ArtisanBuild\AssayContracts\FinishReason;
 use ArtisanBuild\AssayContracts\Operation;
 use ArtisanBuild\AssayContracts\Outcome;
@@ -23,10 +24,12 @@ use Closure;
 use Composer\InstalledVersions;
 use DateTimeImmutable;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\JsonSchema\JsonSchemaTypeFactory;
 use Laravel\Ai\AiServiceProvider;
 use Laravel\Ai\Approvals\Decision;
 use Laravel\Ai\Contracts\HasProviderOptions;
 use Laravel\Ai\Contracts\HasStructuredOutput;
+use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Events\AgentFailed;
 use Laravel\Ai\Events\AgentFailedOver;
@@ -56,14 +59,28 @@ use Laravel\Ai\Events\ToolFailed;
 use Laravel\Ai\Events\ToolInvoked;
 use Laravel\Ai\Events\TranscriptionGenerated;
 use Laravel\Ai\Gateway\ParentInvocation;
+use Laravel\Ai\Gateway\StepResponse;
 use Laravel\Ai\Messages\AssistantMessage;
+use Laravel\Ai\Messages\Message;
+use Laravel\Ai\Messages\ToolResultMessage;
 use Laravel\Ai\Messages\UserMessage;
+use Laravel\Ai\ObjectSchema;
 use Laravel\Ai\Prompts\AgentPrompt;
+use Laravel\Ai\Prompts\AudioPrompt;
+use Laravel\Ai\Prompts\ClassificationPrompt;
+use Laravel\Ai\Prompts\EmbeddingsPrompt;
+use Laravel\Ai\Prompts\ImagePrompt;
+use Laravel\Ai\Prompts\RerankingPrompt;
+use Laravel\Ai\Responses\ClassificationResponse;
 use Laravel\Ai\Responses\Data\ImageUsage;
 use Laravel\Ai\Responses\Data\RerankingUsage;
 use Laravel\Ai\Responses\Data\TextUsage;
+use Laravel\Ai\Responses\Data\ToolCall;
 use Laravel\Ai\Responses\Data\TranscriptionUsage;
 use Laravel\Ai\Responses\Data\Usage as SourceUsage;
+use Laravel\Ai\Responses\ImageResponse;
+use Laravel\Ai\Responses\RerankingResponse;
+use Laravel\Ai\Responses\TranscriptionResponse;
 use Throwable;
 
 final class LaravelAiDriver implements CaptureDriver
@@ -126,18 +143,18 @@ final class LaravelAiDriver implements CaptureDriver
         $this->listen(ToolApprovalRequested::class, fn (ToolApprovalRequested $event) => $this->approvalRequested($event));
         $this->listen(ToolApprovalResolved::class, fn (ToolApprovalResolved $event) => $this->approvalResolved($event));
 
-        $this->listen(GeneratingEmbeddings::class, fn (GeneratingEmbeddings $event) => $this->operationStarted(Operation::Embeddings, $event->invocationId, $event->model, $event->provider->name()));
-        $this->listen(EmbeddingsGenerated::class, fn (EmbeddingsGenerated $event) => $this->operationCompleted(Operation::Embeddings, $event->invocationId, $event->model, $event->provider->name(), $event->response->meta->model, $event->response->meta->provider, $event->response->usage));
-        $this->listen(GeneratingImage::class, fn (GeneratingImage $event) => $this->operationStarted(Operation::Image, $event->invocationId, $event->model, $event->provider->name()));
-        $this->listen(ImageGenerated::class, fn (ImageGenerated $event) => $this->operationCompleted(Operation::Image, $event->invocationId, $event->model, $event->provider->name(), $event->response->meta->model, $event->response->meta->provider, $event->response->usage));
-        $this->listen(GeneratingAudio::class, fn (GeneratingAudio $event) => $this->operationStarted(Operation::Audio, $event->invocationId, $event->model, $event->provider->name()));
-        $this->listen(AudioGenerated::class, fn (AudioGenerated $event) => $this->operationCompleted(Operation::Audio, $event->invocationId, $event->model, $event->provider->name(), $event->response->meta->model, $event->response->meta->provider, $event->response->usage));
-        $this->listen(GeneratingTranscription::class, fn (GeneratingTranscription $event) => $this->operationStarted(Operation::Transcription, $event->invocationId, $event->model, $event->provider->name()));
-        $this->listen(TranscriptionGenerated::class, fn (TranscriptionGenerated $event) => $this->operationCompleted(Operation::Transcription, $event->invocationId, $event->model, $event->provider->name(), $event->response->meta->model, $event->response->meta->provider, $event->response->usage));
-        $this->listen(Reranking::class, fn (Reranking $event) => $this->operationStarted(Operation::Reranking, $event->invocationId, $event->model, $event->provider->name()));
-        $this->listen(Reranked::class, fn (Reranked $event) => $this->operationCompleted(Operation::Reranking, $event->invocationId, $event->model, $event->provider->name(), $event->response->meta->model, $event->response->meta->provider, $event->response->usage));
-        $this->listen(Classifying::class, fn (Classifying $event) => $this->operationStarted(Operation::Classification, $event->invocationId, $event->model, $event->provider->name()));
-        $this->listen(Classified::class, fn (Classified $event) => $this->operationCompleted(Operation::Classification, $event->invocationId, $event->model, $event->provider->name(), $event->response->meta->model, $event->response->meta->provider, $event->response->usage));
+        $this->listen(GeneratingEmbeddings::class, fn (GeneratingEmbeddings $event) => $this->operationStarted(Operation::Embeddings, $event->invocationId, $event->model, $event->provider->name(), $event->prompt));
+        $this->listen(EmbeddingsGenerated::class, fn (EmbeddingsGenerated $event) => $this->operationCompleted(Operation::Embeddings, $event->invocationId, $event->model, $event->provider->name(), $event->response->meta->model, $event->response->meta->provider, $event->response->usage, $event->response));
+        $this->listen(GeneratingImage::class, fn (GeneratingImage $event) => $this->operationStarted(Operation::Image, $event->invocationId, $event->model, $event->provider->name(), $event->prompt));
+        $this->listen(ImageGenerated::class, fn (ImageGenerated $event) => $this->operationCompleted(Operation::Image, $event->invocationId, $event->model, $event->provider->name(), $event->response->meta->model, $event->response->meta->provider, $event->response->usage, $event->response));
+        $this->listen(GeneratingAudio::class, fn (GeneratingAudio $event) => $this->operationStarted(Operation::Audio, $event->invocationId, $event->model, $event->provider->name(), $event->prompt));
+        $this->listen(AudioGenerated::class, fn (AudioGenerated $event) => $this->operationCompleted(Operation::Audio, $event->invocationId, $event->model, $event->provider->name(), $event->response->meta->model, $event->response->meta->provider, $event->response->usage, $event->response));
+        $this->listen(GeneratingTranscription::class, fn (GeneratingTranscription $event) => $this->operationStarted(Operation::Transcription, $event->invocationId, $event->model, $event->provider->name(), $event->prompt));
+        $this->listen(TranscriptionGenerated::class, fn (TranscriptionGenerated $event) => $this->operationCompleted(Operation::Transcription, $event->invocationId, $event->model, $event->provider->name(), $event->response->meta->model, $event->response->meta->provider, $event->response->usage, $event->response));
+        $this->listen(Reranking::class, fn (Reranking $event) => $this->operationStarted(Operation::Reranking, $event->invocationId, $event->model, $event->provider->name(), $event->prompt));
+        $this->listen(Reranked::class, fn (Reranked $event) => $this->operationCompleted(Operation::Reranking, $event->invocationId, $event->model, $event->provider->name(), $event->response->meta->model, $event->response->meta->provider, $event->response->usage, $event->response));
+        $this->listen(Classifying::class, fn (Classifying $event) => $this->operationStarted(Operation::Classification, $event->invocationId, $event->model, $event->provider->name(), $event->prompt));
+        $this->listen(Classified::class, fn (Classified $event) => $this->operationCompleted(Operation::Classification, $event->invocationId, $event->model, $event->provider->name(), $event->response->meta->model, $event->response->meta->provider, $event->response->usage, $event->response));
         $this->listen(ProviderFailedOver::class, fn (ProviderFailedOver $event) => $this->operationFailedOver($event));
     }
 
@@ -182,6 +199,9 @@ final class LaravelAiDriver implements CaptureDriver
                 parent: $parent,
                 model: new ModelInfo(requested: $event->prompt->model, provider: $event->prompt->provider()->name()),
                 agent: $event->prompt->agent::class,
+                capture: $this->capture(),
+                sampled: $this->capture() === CaptureMode::Full,
+                content: $this->content($this->agentStartContent($event->prompt)),
             ));
         } catch (Throwable $exception) {
             $this->invocations->finish($event->invocationId);
@@ -214,6 +234,8 @@ final class LaravelAiDriver implements CaptureDriver
                 finishReason: $lastStep === null ? null : $this->finishReason($lastStep->finishReason->value),
                 outcome: Outcome::Completed,
                 replayInputsOmitted: $this->invocations->replayInputOmissions($event->invocationId),
+                capture: $this->capture(),
+                sampled: $this->capture() === CaptureMode::Full,
             ));
             $recorded = true;
         } finally {
@@ -239,6 +261,9 @@ final class LaravelAiDriver implements CaptureDriver
                 outcome: Outcome::Failed,
                 failureClass: $event->exception::class,
                 replayInputsOmitted: $this->invocations->replayInputOmissions($event->invocationId),
+                capture: $this->capture(),
+                sampled: $this->capture() === CaptureMode::Full,
+                content: $this->content(['exception_message' => $event->exception->getMessage()]),
             ));
         } finally {
             $this->invocations->finish($event->invocationId);
@@ -257,6 +282,8 @@ final class LaravelAiDriver implements CaptureDriver
             agent: $event->agent::class,
             failureClass: $event->exception::class,
             operation: Operation::Agent,
+            capture: $this->capture(),
+            sampled: $this->capture() === CaptureMode::Full,
         ));
     }
 
@@ -271,6 +298,9 @@ final class LaravelAiDriver implements CaptureDriver
             parent: $this->invocations->parent($event->invocationId),
             model: new ModelInfo(requested: $event->model, provider: $event->provider->name()),
             agent: $event->agent::class,
+            capture: $this->capture(),
+            sampled: $this->capture() === CaptureMode::Full,
+            content: $this->content($this->stepMessages($event->messages)),
         ));
     }
 
@@ -288,6 +318,9 @@ final class LaravelAiDriver implements CaptureDriver
             agent: $event->agent::class,
             durationMs: $event->time,
             finishReason: $this->finishReason($event->response->finishReason->value),
+            capture: $this->capture(),
+            sampled: $this->capture() === CaptureMode::Full,
+            content: $this->content($this->stepEndContent($event->response)),
         ));
     }
 
@@ -304,6 +337,9 @@ final class LaravelAiDriver implements CaptureDriver
             agent: $event->agent::class,
             durationMs: $event->time,
             failureClass: $event->exception::class,
+            capture: $this->capture(),
+            sampled: $this->capture() === CaptureMode::Full,
+            content: $this->content(['exception_message' => $event->exception->getMessage()]),
         ));
     }
 
@@ -318,6 +354,9 @@ final class LaravelAiDriver implements CaptureDriver
             parent: $this->invocations->parent($event->invocationId),
             agent: $event->agent::class,
             tool: $this->toolName($event->tool),
+            capture: $this->capture(),
+            sampled: $this->capture() === CaptureMode::Full,
+            content: $this->content(['arguments' => $event->arguments]),
         ));
     }
 
@@ -334,6 +373,9 @@ final class LaravelAiDriver implements CaptureDriver
             tool: $this->toolName($event->tool),
             durationMs: $event->time,
             outcome: Outcome::Completed,
+            capture: $this->capture(),
+            sampled: $this->capture() === CaptureMode::Full,
+            content: $this->content(['result' => $event->result]),
         ));
     }
 
@@ -351,6 +393,9 @@ final class LaravelAiDriver implements CaptureDriver
             durationMs: $event->time,
             outcome: Outcome::Failed,
             failureClass: $event->exception::class,
+            capture: $this->capture(),
+            sampled: $this->capture() === CaptureMode::Full,
+            content: $this->content(['exception_message' => $event->exception->getMessage()]),
         ));
     }
 
@@ -412,7 +457,7 @@ final class LaravelAiDriver implements CaptureDriver
         }
     }
 
-    private function operationStarted(Operation $operation, string $invocationId, string $model, string $provider): void
+    private function operationStarted(Operation $operation, string $invocationId, string $model, string $provider, object $prompt): void
     {
         [$parentInvocationId, $parentToolInvocationId] = ParentInvocation::current();
 
@@ -421,10 +466,11 @@ final class LaravelAiDriver implements CaptureDriver
             $invocationId,
             $this->now(),
             parent: $this->parent($parentInvocationId, $parentToolInvocationId),
-            capture: CaptureMode::Usage,
-            sampled: false,
+            capture: $this->capture(),
+            sampled: $this->capture() === CaptureMode::Full,
             subject: null,
             model: new ModelInfo(requested: $model, provider: $provider),
+            content: $this->content($this->operationStartContent($operation, $prompt)),
         ));
     }
 
@@ -436,6 +482,7 @@ final class LaravelAiDriver implements CaptureDriver
         ?string $respondedModel,
         ?string $respondedProvider,
         SourceUsage $usage,
+        object $response,
     ): void {
         [$parentInvocationId, $parentToolInvocationId] = ParentInvocation::current();
 
@@ -451,6 +498,9 @@ final class LaravelAiDriver implements CaptureDriver
                 provider: $respondedProvider ?? $requestedProvider,
             ),
             outcome: Outcome::Completed,
+            capture: $this->capture(),
+            sampled: $this->capture() === CaptureMode::Full,
+            content: $this->content($this->operationEndContent($operation, $response)),
         ));
     }
 
@@ -463,6 +513,225 @@ final class LaravelAiDriver implements CaptureDriver
             model: new ModelInfo(requested: $event->model, provider: $event->provider->name()),
             failureClass: $event->exception::class,
         ));
+    }
+
+    /** @return array<string, mixed> */
+    private function agentStartContent(AgentPrompt $prompt): array
+    {
+        $content = ['instructions' => (string) $prompt->agent->instructions()];
+
+        if (! $prompt->agent instanceof HasTools) {
+            return $content;
+        }
+
+        $tools = [];
+
+        foreach ($prompt->agent->tools() as $tool) {
+            if (! $tool instanceof Tool) {
+                continue;
+            }
+
+            $tools[] = [
+                'name' => $this->toolName($tool),
+                'description' => (string) $tool->description(),
+                'parameters' => (new ObjectSchema($tool->schema(new JsonSchemaTypeFactory)))->toArray(),
+            ];
+        }
+
+        if ($tools !== []) {
+            $content['tools'] = $tools;
+        }
+
+        return $content;
+    }
+
+    /**
+     * @param  array<array-key, Message>  $messages
+     * @return array<string, mixed>
+     */
+    private function stepMessages(array $messages): array
+    {
+        $normalized = [];
+
+        foreach ($messages as $message) {
+            if ($message instanceof ToolResultMessage) {
+                foreach ($message->toolResults as $result) {
+                    $normalized[] = [
+                        'role' => 'tool',
+                        'text' => $result->text(),
+                        'tool_call_id' => $result->id,
+                    ];
+                }
+
+                continue;
+            }
+
+            $body = [
+                'role' => $message->role->value,
+            ];
+
+            if ($message->content !== null) {
+                $body['text'] = $message->content;
+            }
+
+            if ($message instanceof AssistantMessage) {
+                $calls = $this->toolCalls($message->toolCalls->all());
+
+                if ($calls !== []) {
+                    $body['tool_calls'] = $calls;
+                }
+            }
+
+            $normalized[] = $body;
+        }
+
+        $hashes = [];
+        $bodies = [];
+
+        foreach ($normalized as $message) {
+            $hash = $this->messageHash($message);
+            $hashes[] = $hash;
+            $bodies[$hash] = $message;
+        }
+
+        if ($hashes === []) {
+            return [];
+        }
+
+        return ['message_hashes' => $hashes, 'new_messages' => $bodies];
+    }
+
+    /** @return array<string, mixed> */
+    private function stepEndContent(StepResponse $response): array
+    {
+        $content = ['output_text' => $response->text];
+
+        if ($response->structured !== null && $this->isPlainJson($response->structured)) {
+            $content['structured_output'] = $response->structured;
+        }
+
+        $calls = $this->toolCalls($response->toolCalls);
+
+        if ($calls !== []) {
+            $content['tool_calls'] = $calls;
+        }
+
+        return $content;
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $calls
+     * @return list<array{id: string, name: string, arguments: mixed}>
+     */
+    private function toolCalls(array $calls): array
+    {
+        $normalized = [];
+
+        foreach ($calls as $call) {
+            if (! $call instanceof ToolCall || ! $this->isPlainJson($call->arguments)) {
+                continue;
+            }
+
+            $normalized[] = [
+                'id' => $call->id,
+                'name' => $call->name,
+                'arguments' => $call->arguments,
+            ];
+        }
+
+        return $normalized;
+    }
+
+    /** @return array<string, mixed> */
+    private function operationStartContent(Operation $operation, object $prompt): array
+    {
+        return match (true) {
+            $operation === Operation::Embeddings && $prompt instanceof EmbeddingsPrompt => ['inputs' => $prompt->inputs],
+            $operation === Operation::Image && $prompt instanceof ImagePrompt => ['prompt' => $prompt->prompt],
+            $operation === Operation::Audio && $prompt instanceof AudioPrompt => ['text' => $prompt->text],
+            $operation === Operation::Reranking && $prompt instanceof RerankingPrompt => ['query' => $prompt->query, 'documents' => $prompt->documents],
+            $operation === Operation::Classification && $prompt instanceof ClassificationPrompt && is_string($prompt->state) => [
+                'prompt' => $prompt->state,
+                'labels' => array_keys($prompt->questions),
+            ],
+            default => [],
+        };
+    }
+
+    /** @return array<string, mixed> */
+    private function operationEndContent(Operation $operation, object $response): array
+    {
+        return match (true) {
+            $operation === Operation::Image && $response instanceof ImageResponse => ['count' => $response->count()],
+            $operation === Operation::Transcription && $response instanceof TranscriptionResponse => ['text' => $response->text],
+            $operation === Operation::Reranking && $response instanceof RerankingResponse => [
+                'results' => array_map(static fn ($result): array => [
+                    'index' => $result->index,
+                    'score' => $result->score,
+                ], $response->results),
+            ],
+            $operation === Operation::Classification && $response instanceof ClassificationResponse => [
+                'answers' => array_map(static fn ($answer): array => $answer->toArray(), $response->answers),
+            ],
+            default => [],
+        };
+    }
+
+    /** @param array<string, mixed> $data */
+    private function content(array $data): ?Content
+    {
+        return $this->capture() === CaptureMode::Full && $data !== [] && $this->isPlainJson($data)
+            ? new Content($data)
+            : null;
+    }
+
+    private function capture(): CaptureMode
+    {
+        return CaptureMode::tryFrom((string) config('assay.capture', CaptureMode::Usage->value))
+            ?? CaptureMode::Usage;
+    }
+
+    /** @param array<string, mixed> $message */
+    private function messageHash(array $message): string
+    {
+        return hash('sha256', json_encode(
+            $this->canonicalize($message),
+            JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+        ));
+    }
+
+    private function canonicalize(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        if (array_is_list($value)) {
+            return array_map($this->canonicalize(...), $value);
+        }
+
+        ksort($value, SORT_STRING);
+
+        return array_map($this->canonicalize(...), $value);
+    }
+
+    private function isPlainJson(mixed $value): bool
+    {
+        if (is_null($value) || is_scalar($value)) {
+            return ! is_float($value) || is_finite($value);
+        }
+
+        if (! is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $item) {
+            if (! $this->isPlainJson($item)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function approval(string $action): Approval

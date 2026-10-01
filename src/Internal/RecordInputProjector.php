@@ -56,6 +56,7 @@ final class RecordInputProjector
             failureClass: $input->failureClass,
             failureCapture: $input->failureCapture,
             replayInputsOmitted: $input->replayInputsOmitted,
+            content: $input->content,
         );
     }
 
@@ -102,6 +103,7 @@ final class RecordInputProjector
             durationMs: $input->durationMs,
             finishReason: $input->finishReason,
             failureClass: $input->failureClass,
+            content: $input->content,
         );
     }
 
@@ -129,6 +131,7 @@ final class RecordInputProjector
             outcome: $input->outcome,
             approval: $input->approval,
             failureClass: $input->failureClass,
+            content: $input->content,
         );
     }
 
@@ -152,6 +155,7 @@ final class RecordInputProjector
             finishReason: $input->finishReason,
             outcome: $input->outcome,
             failureClass: $input->failureClass,
+            content: $input->content,
         );
     }
 
@@ -170,6 +174,7 @@ final class RecordInputProjector
             parentToolInvocationId: $input->parent?->toolInvocationId,
             subject: $input->subject,
             model: $input->model->toContract(),
+            content: $input->content,
         );
     }
 }

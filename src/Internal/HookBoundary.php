@@ -6,15 +6,19 @@ namespace ArtisanBuild\AssayClient\Internal;
 
 use ArtisanBuild\AssayContracts\Content;
 use ArtisanBuild\AssayContracts\RecordV1;
+use stdClass;
 
 final class HookBoundary
 {
     /** @param array<string, mixed> $filtered */
     public function restore(RecordV1 $original, array $filtered): RecordV1
     {
+        $value = $filtered['content'] ?? null;
         $content = array_key_exists('content', $filtered)
-            ? Content::fromValue($filtered['content'])
-            : null;
+            && ! ($value instanceof stdClass && get_object_vars($value) === [])
+            && $value !== []
+                ? Content::fromValue($value)
+                : null;
 
         return new RecordV1(
             recordId: $original->recordId,

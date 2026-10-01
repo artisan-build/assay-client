@@ -14,6 +14,23 @@ use ArtisanBuild\AssayContracts\Client;
 use ArtisanBuild\AssayContracts\EnvelopeCodec;
 use ArtisanBuild\AssayContracts\Operation;
 use ArtisanBuild\AssayContracts\Outcome;
+use ArtisanBuild\BuiltForCloudContracts\OutboundPayload;
+use ArtisanBuild\BuiltForCloudContracts\PayloadFilter;
+use Illuminate\Container\Container;
+
+function recorderContainer(): Container
+{
+    $container = new Container;
+    $container->instance(PayloadFilter::class, new class implements PayloadFilter
+    {
+        public function filter(OutboundPayload $payload): OutboundPayload
+        {
+            return $payload;
+        }
+    });
+
+    return $container;
+}
 
 it('batches deterministically and stamps current cumulative totals', function (): void {
     $drops = new InMemoryDropCounter;
@@ -30,6 +47,7 @@ it('batches deterministically and stamps current cumulative totals', function ()
         retryForSeconds: 3600,
         drops: $drops,
         dispatcher: $dispatcher,
+        app: recorderContainer(),
     );
 
     foreach (range(1, 3) as $index) {
@@ -76,6 +94,7 @@ it('contains projection and dispatch failures without reaching the host', functi
         retryForSeconds: 3600,
         drops: $drops,
         dispatcher: $dispatcher,
+        app: recorderContainer(),
     );
 
     $recorder->record(new SingleOperationInput(
@@ -102,6 +121,7 @@ it('rejects unsupported driver input instead of coercing it into a record', func
         retryForSeconds: 3600,
         drops: $drops,
         dispatcher: $dispatcher,
+        app: recorderContainer(),
     );
 
     $recorder->record(new class implements RecordInput {});
@@ -129,6 +149,7 @@ it('uses the exact encoded byte boundary and flushes byte-limited records in ord
         retryForSeconds: 3600,
         drops: new InMemoryDropCounter,
         dispatcher: $probe,
+        app: recorderContainer(),
     );
     $probeRecorder->record($input(1));
     $exactBytes = strlen($probe->dispatched[0]['json']);
@@ -145,6 +166,7 @@ it('uses the exact encoded byte boundary and flushes byte-limited records in ord
         retryForSeconds: 3600,
         drops: $drops,
         dispatcher: $dispatcher,
+        app: recorderContainer(),
         maxBatchBytes: $exactBytes,
     );
 
@@ -181,6 +203,7 @@ it('counts a locally oversized record once without dispatching it', function ():
         retryForSeconds: 3600,
         drops: $drops,
         dispatcher: $dispatcher,
+        app: recorderContainer(),
         maxBatchBytes: 1,
     );
 

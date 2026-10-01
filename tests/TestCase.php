@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace ArtisanBuild\AssayClient\Tests;
 
 use ArtisanBuild\AssayClient\AssayClientServiceProvider;
+use ArtisanBuild\BuiltForCloudContracts\OutboundPayload;
+use ArtisanBuild\BuiltForCloudContracts\PayloadFilter;
 use Illuminate\Foundation\Application;
 use Orchestra\Testbench\TestCase as Orchestra;
 
@@ -22,6 +24,13 @@ abstract class TestCase extends Orchestra
     /** @param Application $app */
     protected function defineEnvironment($app): void
     {
+        $app->bind(PayloadFilter::class, static fn (): PayloadFilter => new class implements PayloadFilter
+        {
+            public function filter(OutboundPayload $payload): OutboundPayload
+            {
+                return $payload;
+            }
+        });
         $app['config']->set('app.key', 'base64:'.base64_encode(str_repeat('a', 32)));
         $app['config']->set('cache.default', 'database');
         $app['config']->set('cache.stores.database', [

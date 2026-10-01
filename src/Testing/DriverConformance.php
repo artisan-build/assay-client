@@ -178,6 +178,7 @@ final class DriverConformance
             retryForSeconds: 86400,
             drops: $drops,
             dispatcher: $dispatcher,
+            app: app(),
         );
 
         foreach ($records as $record) {

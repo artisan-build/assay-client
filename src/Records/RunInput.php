@@ -10,6 +10,7 @@ use ArtisanBuild\AssayClient\ParentLink;
 use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayClient\Usage;
 use ArtisanBuild\AssayContracts\CaptureMode;
+use ArtisanBuild\AssayContracts\Content;
 use ArtisanBuild\AssayContracts\FailureCapture;
 use ArtisanBuild\AssayContracts\FinishReason;
 use ArtisanBuild\AssayContracts\Operation;
@@ -45,6 +46,7 @@ final readonly class RunInput implements RecordInput
         public ?string $failureClass = null,
         public ?FailureCapture $failureCapture = null,
         ?array $replayInputsOmitted = null,
+        public ?Content $content = null,
     ) {
         if (! in_array($this->type, [RecordType::RunStart, RecordType::RunEnd], true)) {
             throw new InvalidArgumentException('Run input type must be run.start or run.end.');
@@ -103,5 +105,9 @@ final readonly class RunInput implements RecordInput
 
         $this->at = InputValidation::time($at);
         $this->replayInputsOmitted = $replayInputsOmitted;
+
+        if ($this->content !== null && $this->capture !== CaptureMode::Full) {
+            throw new InvalidArgumentException('Content requires full capture.');
+        }
     }
 }

@@ -9,6 +9,7 @@ use ArtisanBuild\AssayClient\ModelInfo;
 use ArtisanBuild\AssayClient\ParentLink;
 use ArtisanBuild\AssayClient\RecordInput;
 use ArtisanBuild\AssayContracts\CaptureMode;
+use ArtisanBuild\AssayContracts\Content;
 use ArtisanBuild\AssayContracts\Operation;
 use DateTimeImmutable;
 use DateTimeInterface;
@@ -27,6 +28,7 @@ final readonly class OperationStartInput implements RecordInput
         public bool $sampled,
         public ?string $subject,
         public ModelInfo $model,
+        public ?Content $content = null,
     ) {
         if ($this->operation === Operation::Agent) {
             throw new InvalidArgumentException('Operation start input cannot use the agent operation.');
@@ -39,5 +41,9 @@ final readonly class OperationStartInput implements RecordInput
         }
 
         $this->at = InputValidation::time($at);
+
+        if ($this->content !== null && $this->capture !== CaptureMode::Full) {
+            throw new InvalidArgumentException('Content requires full capture.');
+        }
     }
 }

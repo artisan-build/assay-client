@@ -21,7 +21,9 @@ use ArtisanBuild\AssayClient\Testing\DriverConformance;
 use ArtisanBuild\AssayClient\Testing\DriverScenario;
 use ArtisanBuild\AssayClient\Tests\Support\CollectingDispatcher;
 use ArtisanBuild\AssayClient\Tests\Support\InMemoryDropCounter;
+use ArtisanBuild\AssayClient\Transport\HttpTransport;
 use ArtisanBuild\AssayClient\Usage;
+use ArtisanBuild\AssayContracts\CaptureMode;
 use ArtisanBuild\AssayContracts\Client;
 use ArtisanBuild\AssayContracts\FinishReason as ContractFinishReason;
 use ArtisanBuild\AssayContracts\Operation;
@@ -30,15 +32,19 @@ use ArtisanBuild\AssayContracts\RecordType;
 use ArtisanBuild\AssayContracts\ReplayInputOmission;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Events\Dispatcher;
+use Illuminate\Http\Client\Request as HttpRequest;
+use Illuminate\Support\Facades\Http;
 use Laravel\Ai\Agents\SummarizeAgent;
 use Laravel\Ai\Ai;
 use Laravel\Ai\AiManager;
 use Laravel\Ai\Approvals\Decision;
 use Laravel\Ai\Approvals\Decisions;
 use Laravel\Ai\Approvals\PendingApproval;
+use Laravel\Ai\Classification\Boolean as BooleanQuestion;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\HasProviderOptions;
 use Laravel\Ai\Contracts\HasStructuredOutput;
+use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Contracts\Providers\TextProvider;
 use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Enums\Lab;
@@ -72,6 +78,8 @@ use Laravel\Ai\Files\Base64Audio;
 use Laravel\Ai\Gateway\ParentInvocation;
 use Laravel\Ai\Gateway\StepResponse;
 use Laravel\Ai\Messages\AssistantMessage;
+use Laravel\Ai\Messages\ToolResultMessage;
+use Laravel\Ai\Messages\UserMessage;
 use Laravel\Ai\Promptable;
 use Laravel\Ai\Prompts\AgentPrompt;
 use Laravel\Ai\Prompts\AudioPrompt;
@@ -83,13 +91,16 @@ use Laravel\Ai\Prompts\TranscriptionPrompt;
 use Laravel\Ai\Responses\AgentResponse;
 use Laravel\Ai\Responses\AudioResponse;
 use Laravel\Ai\Responses\ClassificationResponse;
+use Laravel\Ai\Responses\Data\BooleanAnswer;
 use Laravel\Ai\Responses\Data\FinishReason;
 use Laravel\Ai\Responses\Data\GeneratedImage;
 use Laravel\Ai\Responses\Data\ImageUsage;
 use Laravel\Ai\Responses\Data\Meta;
+use Laravel\Ai\Responses\Data\RankedDocument;
 use Laravel\Ai\Responses\Data\RerankingUsage;
 use Laravel\Ai\Responses\Data\Step;
 use Laravel\Ai\Responses\Data\TextUsage;
+use Laravel\Ai\Responses\Data\ToolCall;
 use Laravel\Ai\Responses\Data\ToolResult;
 use Laravel\Ai\Responses\Data\TranscriptionUsage;
 use Laravel\Ai\Responses\Data\Usage as SourceUsage;
@@ -132,7 +143,7 @@ final class LaravelAiNamedTool implements Tool
     }
 }
 
-final class LaravelAiReplayAgent implements Agent, HasProviderOptions, HasStructuredOutput
+final class LaravelAiReplayAgent implements Agent, HasProviderOptions, HasStructuredOutput, HasTools
 {
     use Promptable;
 
@@ -149,6 +160,11 @@ final class LaravelAiReplayAgent implements Agent, HasProviderOptions, HasStruct
     public function schema(JsonSchema $schema): array
     {
         return [];
+    }
+
+    public function tools(): iterable
+    {
+        return [new LaravelAiNamedTool];
     }
 }
 
@@ -400,6 +416,7 @@ it('projects every non-agent usage shape with synchronous parents and unattribut
         86400,
         $drops,
         $envelopes,
+        app(),
     );
     foreach ($recorder->records as $record) {
         $buffered->record($record);
@@ -812,6 +829,7 @@ it('silently routes listener projection failures through transport drops', funct
         86400,
         $drops,
         new CollectingDispatcher,
+        app(),
     );
     $driver = new LaravelAiDriver($events);
     $driver->register($buffered);
@@ -823,4 +841,171 @@ it('silently routes listener projection failures through transport drops', funct
     expect(fn () => $events->dispatch(new StepFailed('failure-run', 0, $agent, $provider, 'model-a', true, new RuntimeException('secret'), NAN)))
         ->not->toThrow(Throwable::class)
         ->and($drops->transportTotal())->toBe(1);
+});
+
+it('projects full agent content while excluding replay provider attachment and source-object canaries', function (): void {
+    config()->set('assay.capture', 'full');
+    $events = new Dispatcher;
+    $collected = new LaravelAiCollectingRecorder;
+    (new LaravelAiDriver($events))->register($collected);
+    $provider = laravelAiProvider($events, 'full-content');
+    $agent = new LaravelAiReplayAgent;
+    $excluded = 'EXCLUDED-FULL-CANARY';
+    $prompt = new AgentPrompt(
+        $agent,
+        'allowed prompt',
+        [$excluded],
+        $provider,
+        'model-a',
+        invocationId: 'full-run',
+        messages: [new AssistantMessage('history', replayBlocks: [['secret' => $excluded]])],
+    );
+    $toolCall = new ToolCall('call-1', 'LaravelAiNamedTool', ['id' => 7], reasoningEncryptedContent: $excluded);
+    $stepResponse = new StepResponse(
+        'allowed output',
+        [$toolCall],
+        FinishReason::Stop,
+        new TextUsage(1, 2),
+        new Meta('full-content', 'model-a'),
+        structured: ['answer' => true],
+        continuationToken: $excluded,
+        replayBlocks: [['secret' => $excluded]],
+    );
+
+    $events->dispatch(new PromptingAgent('full-run', $prompt));
+    $events->dispatch(new StartingStep('full-run', 0, $agent, $provider, 'model-a', false, [
+        new UserMessage('allowed user'),
+        new AssistantMessage('allowed assistant', collect([$toolCall]), [['secret' => $excluded]]),
+        new ToolResultMessage(collect([new ToolResult('call-1', 'LaravelAiNamedTool', ['id' => 7], 'allowed result')])),
+    ], null));
+    $events->dispatch(new StepCompleted('full-run', 0, $agent, $provider, 'model-a', true, $stepResponse, 2.5));
+    $events->dispatch(new InvokingTool('full-run', 'tool-1', $agent, new LaravelAiNamedTool, ['id' => 7]));
+    $events->dispatch(new ToolInvoked('full-run', 'tool-1', $agent, new LaravelAiNamedTool, ['id' => 7], ['ok' => true], 1.0));
+    $events->dispatch(new ToolFailed('full-run', 'tool-2', $agent, new LaravelAiNamedTool, [], new RuntimeException('allowed exception'), 1.0));
+    $events->dispatch(new AgentFailed('full-run', $prompt, new RuntimeException('allowed run exception')));
+
+    $records = collect($collected->records);
+    $runStart = $records->first(static fn (RecordInput $record): bool => $record instanceof RunInput && $record->type === RecordType::RunStart);
+    $stepStart = $records->first(static fn (RecordInput $record): bool => $record instanceof StepInput && $record->type === RecordType::StepStart);
+    $stepEnd = $records->first(static fn (RecordInput $record): bool => $record instanceof StepInput && $record->type === RecordType::StepEnd);
+    $tools = $records->filter(static fn (RecordInput $record): bool => $record instanceof ToolCallInput)->values();
+    $runEnd = $records->first(static fn (RecordInput $record): bool => $record instanceof RunInput && $record->type === RecordType::RunEnd);
+
+    expect($runStart->capture)->toBe(CaptureMode::Full)
+        ->and($runStart->content?->toArray())->toMatchArray(['instructions' => 'Safe instructions'])
+        ->and($runStart->content?->toArray()['tools'][0])->toMatchArray(['name' => 'LaravelAiNamedTool', 'description' => 'Safe description'])
+        ->and($stepStart->content?->toArray()['message_hashes'])->toHaveCount(3)
+        ->and($stepStart->content?->toArray()['new_messages'])->toHaveCount(3)
+        ->and($stepEnd->content?->toArray())->toMatchArray(['output_text' => 'allowed output', 'structured_output' => ['answer' => true]])
+        ->and($tools[0]->content?->toArray())->toBe(['arguments' => ['id' => 7]])
+        ->and($tools[1]->content?->toArray())->toBe(['result' => ['ok' => true]])
+        ->and($tools[2]->content?->toArray())->toBe(['exception_message' => 'allowed exception'])
+        ->and($runEnd->content?->toArray())->toBe(['exception_message' => 'allowed run exception'])
+        ->and(serialize($collected->records))->not->toContain($excluded, 'provider-option-canary');
+
+    $dispatcher = new CollectingDispatcher;
+    $buffered = new BufferedRecorder(
+        'laravel-ai',
+        new SourceInfo('laravel/ai', 'test'),
+        new Client('artisan-build/assay-client', 'test'),
+        'testing',
+        null,
+        100,
+        86400,
+        new InMemoryDropCounter,
+        $dispatcher,
+        app(),
+    );
+    foreach ($collected->records as $record) {
+        $buffered->record($record);
+    }
+    $buffered->flush();
+
+    $json = $dispatcher->dispatched[0]['json'];
+    expect($json)->not->toContain($excluded, 'provider-option-canary');
+
+    config()->set('assay.url', 'https://assay.test/ingest');
+    config()->set('assay.token', 'test-token');
+    Http::fake(['https://assay.test/ingest' => Http::response(status: 202)]);
+    resolve(HttpTransport::class)->send($json);
+    Http::assertSent(static fn (HttpRequest $request): bool => $request->body() === $json
+        && ! str_contains($request->body(), $excluded));
+});
+
+it('projects every supported non-agent full-content shape without media vectors or provider options', function (): void {
+    config()->set('assay.capture', 'full');
+    $events = new Dispatcher;
+    $recorder = new LaravelAiCollectingRecorder;
+    (new LaravelAiDriver($events))->register($recorder);
+    $manager = new AiManager(app());
+    app()['config']->set('ai.providers.full-ops', ['driver' => 'openai', 'key' => 'EXCLUDED-CREDENTIAL']);
+    app()['config']->set('ai.providers.full-rerank', ['driver' => 'cohere', 'key' => 'EXCLUDED-RERANK-CREDENTIAL']);
+    app()['config']->set('ai.providers.full-classify', ['driver' => 'typesafe', 'key' => 'EXCLUDED-CLASSIFY-CREDENTIAL']);
+    $provider = $manager->instance('full-ops');
+    $rerankProvider = $manager->instance('full-rerank');
+    $classifyProvider = $manager->instance('full-classify');
+    $meta = new Meta('full-ops', 'responded');
+    $excluded = 'EXCLUDED-MEDIA-CANARY';
+    $embeddings = new EmbeddingsPrompt(['embed one', 'embed two'], 2, $provider, 'embed', providerOptions: ['secret' => $excluded]);
+    $image = new ImagePrompt('draw this', [], null, null, $provider, 'image', providerOptions: ['secret' => $excluded]);
+    $audio = new AudioPrompt('say this', 'voice', null, $provider, 'audio', providerOptions: ['secret' => $excluded]);
+    $transcription = new TranscriptionPrompt(new Base64Audio(base64_encode($excluded)), null, false, $provider, 'transcribe', providerOptions: ['secret' => $excluded]);
+    $reranking = new RerankingPrompt(['document one', 'document two'], 'find this', null, $rerankProvider, 'rerank', providerOptions: ['secret' => $excluded]);
+    $classification = new ClassificationPrompt('classify this', ['flag' => new BooleanQuestion('Is it flagged?')], $classifyProvider, 'classify', providerOptions: ['secret' => $excluded]);
+
+    $events->dispatch(new GeneratingEmbeddings('emb', $provider, 'embed', $embeddings));
+    $events->dispatch(new EmbeddingsGenerated('emb', $provider, 'embed', $embeddings, new EmbeddingsResponse([[0.123, 0.456]], new SourceUsage(1, 0), $meta)));
+    $events->dispatch(new GeneratingImage('img', $provider, 'image', $image));
+    $events->dispatch(new ImageGenerated('img', $provider, 'image', $image, new ImageResponse(collect([new GeneratedImage(base64_encode($excluded), 'image/png')]), new ImageUsage, $meta)));
+    $events->dispatch(new GeneratingAudio('audio', $provider, 'audio', $audio));
+    $events->dispatch(new AudioGenerated('audio', $provider, 'audio', $audio, new AudioResponse(base64_encode($excluded), new SourceUsage, $meta)));
+    $events->dispatch(new GeneratingTranscription('tx', $provider, 'transcribe', $transcription));
+    $events->dispatch(new TranscriptionGenerated('tx', $provider, 'transcribe', $transcription, new TranscriptionResponse('transcribed text', collect(), new TranscriptionUsage, $meta)));
+    $events->dispatch(new Reranking('rank', $rerankProvider, 'rerank', $reranking));
+    $events->dispatch(new Reranked('rank', $rerankProvider, 'rerank', $reranking, new RerankingResponse([new RankedDocument(1, 'document two', 0.9)], new RerankingUsage, $meta)));
+    $events->dispatch(new Classifying('class', $classifyProvider, 'classify', $classification));
+    $events->dispatch(new Classified('class', $classifyProvider, 'classify', $classification, new ClassificationResponse(['flag' => new BooleanAnswer(0.8)], new TextUsage, $meta)));
+
+    $starts = collect($recorder->records)->filter(static fn (RecordInput $record): bool => $record instanceof OperationStartInput)->keyBy(static fn (OperationStartInput $record): string => $record->operation->value);
+    $ends = collect($recorder->records)->filter(static fn (RecordInput $record): bool => $record instanceof SingleOperationInput)->keyBy(static fn (SingleOperationInput $record): string => $record->operation->value);
+
+    expect($starts['embeddings']->content?->toArray())->toBe(['inputs' => ['embed one', 'embed two']])
+        ->and($starts['image']->content?->toArray())->toBe(['prompt' => 'draw this'])
+        ->and($starts['audio']->content?->toArray())->toBe(['text' => 'say this'])
+        ->and($starts['transcription']->content)->toBeNull()
+        ->and($starts['reranking']->content?->toArray())->toBe(['query' => 'find this', 'documents' => ['document one', 'document two']])
+        ->and($starts['classification']->content?->toArray())->toBe(['prompt' => 'classify this', 'labels' => ['flag']])
+        ->and($ends['embeddings']->content)->toBeNull()
+        ->and($ends['image']->content?->toArray())->toBe(['count' => 1])
+        ->and($ends['audio']->content)->toBeNull()
+        ->and($ends['transcription']->content?->toArray())->toBe(['text' => 'transcribed text'])
+        ->and($ends['reranking']->content?->toArray())->toBe(['results' => [['index' => 1, 'score' => 0.9]]])
+        ->and($ends['classification']->content?->toArray())->toBe(['answers' => ['flag' => ['probability' => 0.8]]])
+        ->and(serialize($recorder->records))->not->toContain($excluded, base64_encode($excluded), 'EXCLUDED-CREDENTIAL');
+
+    $dispatcher = new CollectingDispatcher;
+    $buffered = new BufferedRecorder(
+        'laravel-ai',
+        new SourceInfo('laravel/ai', 'test'),
+        new Client('artisan-build/assay-client', 'test'),
+        'testing',
+        null,
+        100,
+        86400,
+        new InMemoryDropCounter,
+        $dispatcher,
+        app(),
+    );
+    foreach ($recorder->records as $record) {
+        $buffered->record($record);
+    }
+    $buffered->flush();
+
+    expect($dispatcher->dispatched[0]['json'])->not->toContain(
+        $excluded,
+        base64_encode($excluded),
+        'EXCLUDED-CREDENTIAL',
+        'EXCLUDED-RERANK-CREDENTIAL',
+        'EXCLUDED-CLASSIFY-CREDENTIAL',
+    );
 });
