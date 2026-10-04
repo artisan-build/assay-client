@@ -2,19 +2,14 @@
     "$schema": "https://getcomposer.org/schema.json",
     "name": "artisan-build/assay-client",
     "description": "Laravel client package for reporting AI telemetry to a self-hosted Assay server.",
-    "keywords": ["assay", "ai", "telemetry", "laravel"],
+    "keywords": [
+        "assay",
+        "ai",
+        "telemetry",
+        "laravel"
+    ],
     "license": "MIT",
     "type": "library",
-    "version": "1.0.0",
-    "repositories": [
-        {
-            "type": "path",
-            "url": "../assay-contracts",
-            "options": {
-                "symlink": true
-            }
-        }
-    ],
     "require": {
         "php": "^8.4",
         "artisan-build/bfc-client": "^0.1 || ^0.2",
