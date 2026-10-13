@@ -1,9 +1,8 @@
 # Assay Client
 
-The Assay client captures AI activity inside a Laravel application, projects it into primitive Envelope v1
-records, runs the application's outbound payload filter, and dispatches encrypted queue jobs to a
-self-hosted Assay server. Its core has no dependency on a specific AI package; the included default driver
-supports `laravel/ai` 1.x.
+The Assay client captures AI activity inside a Laravel 12.62+ or 13 application, projects it into primitive
+Envelope v1 records, runs the application's outbound payload filter, and dispatches encrypted queue jobs to
+a self-hosted Assay server. The included default driver supports `laravel/ai` 1.x.
 
 ## Installation
 
@@ -14,9 +13,8 @@ composer require artisan-build/assay-client
 php artisan vendor:publish --tag=assay-config
 ```
 
-Laravel package discovery registers `AssayClientServiceProvider`. The package does not require
-`laravel/ai`, but it conflicts with releases older than 1.0. When `laravel/ai` is absent, the default driver
-registers no listeners and capture remains inert.
+Laravel package discovery registers `AssayClientServiceProvider`. Installing the client also installs
+`laravel/ai` 1.x for the default driver.
 
 Issue an `assay.ingest` installation credential in the Assay server's package UI. Configure the complete
 ingest URL and the one-time bearer secret in the reporting application:

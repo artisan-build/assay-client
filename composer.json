@@ -20,15 +20,16 @@
         "artisan-build/bfc-client": "^0.1 || ^0.2",
         "artisan-build/assay-contracts": "^1.0",
         "artisan-build/built-for-cloud-contracts": "^0.4",
-        "illuminate/cache": "^13.0",
-        "illuminate/contracts": "^13.0",
-        "illuminate/http": "^13.0",
-        "illuminate/queue": "^13.0",
-        "illuminate/support": "^13.0"
+        "illuminate/cache": "^12.62 || ^13.0",
+        "illuminate/contracts": "^12.62 || ^13.0",
+        "illuminate/http": "^12.62 || ^13.0",
+        "illuminate/json-schema": "^12.62 || ^13.0",
+        "illuminate/queue": "^12.62 || ^13.0",
+        "illuminate/support": "^12.62 || ^13.0",
+        "laravel/ai": "^1.0"
     },
     "require-dev": {
         "larastan/larastan": "^3.9",
-        "laravel/ai": "^1.0",
         "laravel/pint": "^1.27",
         "orchestra/testbench": "^11.0",
         "pestphp/pest": "^4.7",
