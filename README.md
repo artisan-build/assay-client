@@ -7,14 +7,10 @@ supports `laravel/ai` 1.x.
 
 ## Installation
 
-The split package repositories are a release prerequisite and are not assumed to be published. During
-source development, add both packages from an Assay checkout to the reporting application's Composer
-configuration:
+Install the client from Packagist in the reporting application:
 
 ```bash
-composer config repositories.assay-contracts path /absolute/path/to/assay/packages/assay-contracts
-composer config repositories.assay-client path /absolute/path/to/assay/packages/assay-client
-composer require artisan-build/assay-client:^1.0
+composer require artisan-build/assay-client
 php artisan vendor:publish --tag=assay-config
 ```
 
